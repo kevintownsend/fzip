@@ -21,6 +21,7 @@
 #include <stdint.h>
 #include "sortByRepeats.h"
 #include "arithmeticFloatingPointCompression.h"
+#include <bwt.hpp>
 #include <map>
 
 using namespace std;
