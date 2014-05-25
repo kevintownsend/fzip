@@ -20,7 +20,7 @@
 #include <map>
 #include <cstdlib>
 #include <cstring>
-#include "tardis.h"
+#include <tardis.h>
 #include "common.h"
 #include "sortByRepeats.h"
 #include <exception>
