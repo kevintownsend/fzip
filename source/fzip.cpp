@@ -25,6 +25,7 @@
 #include <map>
 
 using namespace std;
+using namespace townsend::algorithm;
 
 int bwt(vector<uint64_t> &data);
 
@@ -74,7 +75,7 @@ int fzipCompress(){
         rawInput.push_back(value);
     }
     int count = rawInput.size();
-    bwt(rawInput);
+    auto key = bwtEncode(rawInput.begin(),rawInput.end());
     int zeroDeltas = 0;
     for(int i = 0; i < rawInput.size()-1; i++){
         if(rawInput[i] == rawInput[i+1])
@@ -108,7 +109,7 @@ int fzipCompress(){
     fzip0aFmt_t* finalData = (fzip0aFmt_t*)malloc(finalSize);
     finalData->size = finalSize;
     finalData->count = count;
-    finalData->bwtEndPtr = 0;//TODO: finish
+    finalData->bwtEndPtr = key-rawInput.begin();//TODO: finish
     logFile.close();
     return 0;
 }
