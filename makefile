@@ -11,3 +11,6 @@ source/common.o : source/common.cpp
 
 source/sortByRepeats.o : source/sortByRepeats.cpp
 	g++ -Iinclude -c -std=gnu++0x source/sortByRepeats.cpp -o source/sortByRepeats.o
+
+install :
+	cp fzip ${HOME}/bin/.
