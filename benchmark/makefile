@@ -8,7 +8,7 @@
 all : test.trace.fz
 
 %.fpc :
-	wget http://www.csl.cornell.edu/~burtscher/research/FPC/$@
+	wget http://www.cs.txstate.edu/~burtscher/research/datasets/FPdouble/$@
 
 %.bin : %.fpc
 	fpc < $< > $@
