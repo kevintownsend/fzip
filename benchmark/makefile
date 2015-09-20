@@ -23,7 +23,16 @@ all : test obs
 	fpc < $< > $@
 
 %.fz : %.bin
-	fzip < $< > $@
+	../fzip < $< > $@
+
+vim :
+	vim -p makefile createBin.cpp
+
+createBin: createBin.cpp
+	g++ -std=c++11 -o createBin createBin.cpp
+
+example.bin: createBin
+	createBin < example.dat > example.bin
 
 clean :
 	rm *.fz
