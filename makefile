@@ -1,8 +1,9 @@
 all: fzip
 
 run : fzip
-	ls -l benchmark/example.bin
-	fzip < ./benchmark/example.bin > example.fz
+	fzip -c < ./benchmark/example.bin > example.fz
+	fzip -d example.fz exampleAfter.bin
+
 
 fzip: source/fzip.cpp source/common.o source/sortByRepeats.o include/fzip.hpp
 	g++ -g -std=c++11 -Iinclude -o fzip source/fzip.cpp
