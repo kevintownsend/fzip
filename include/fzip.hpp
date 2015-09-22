@@ -155,6 +155,7 @@ bool fzipDecompress(FzipOptions options){
 
     vector<double> rawStream;
     fzipDecompress(rawStream, commons, codes, codeStream, argumentStream, header.codeStreamBitLength, header.argumentStreamBitLength);
+    fwrite(&rawStream[0], sizeof(double), rawStream.size(), options.outputFile);
     //TODO: write rawStream
 };
 
@@ -478,21 +479,23 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
     //TODO: write
     ull currCodeStreamBit = 0;
     ull currArgumentStreamBit = 0;
-    int i = 0;
-    cerr << "codeStreamBitLength: " << codeStreamBitLength << endl;
     while(currCodeStreamBit != codeStreamBitLength){
-        cerr << "decoding a value" << endl;
-        cerr << "currCodeStreamBit: " << currCodeStreamBit << endl;
         ull buffer = codeStream[currCodeStreamBit / 64] >> (currCodeStreamBit % 64);
         if(currCodeStreamBit % 64 > 64 - 9)
             buffer |= codeStream[currCodeStreamBit / 64 + 1] << (64 - currCodeStreamBit % 64);
         FzipCode code = codes[buffer & (ull)-1LL >> 64 - 9];
         ull value = code.prefix;
-
         currCodeStreamBit += code.codeLength;
-        i++;
-        if(i > 20)
-            break;
+
+        buffer = argumentStream[currArgumentStreamBit / 64] >> (64 - currArgumentStreamBit % 64);
+        if(code.prefixLength != 64)
+            buffer |= (ull)-1LL >> (64 - code.prefixLength);
+        if(code.isCommon)
+            value = commons[buffer];
+        else if(code.prefixLength != 64)
+            value |= buffer;
+        currArgumentStreamBit += 64 - code.prefixLength;
+        rawStream.push_back(*(double*)&value);
     }
 }
 
