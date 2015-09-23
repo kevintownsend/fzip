@@ -4,6 +4,14 @@ run : fzip
 	fzip -c < ./benchmark/example.bin > example.fz
 	fzip -d example.fz exampleAfter.bin
 
+run2 : fzip
+	fzip -c ./benchmark/obs_info.trace.bin obs_info.fz
+	fzip -d obs_info.fz obs_info.after
+
+run3: fzip
+	fzip -c ./benchmark/test.trace.bin test.fz
+	fzip -d test.fz test.after
+
 
 fzip: source/fzip.cpp source/common.o source/sortByRepeats.o include/fzip.hpp
 	g++ -g -std=c++11 -Iinclude -o fzip source/fzip.cpp
