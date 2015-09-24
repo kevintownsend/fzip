@@ -367,6 +367,17 @@ struct PrefixNode{
         frequency = 0;
     }
 };
+
+bool checkBounds(PrefixNode* begin, PrefixNode* end){
+    for(PrefixNode* ptr = begin; ptr != end; ++ptr){
+        if((ptr->leftChild < begin || ptr->leftChild >= end) && ptr->leftChild != nullptr)
+            return false;
+        if((ptr->rightChild < begin || ptr->rightChild >= end) && ptr->rightChild != nullptr)
+            return false;
+    }
+    return true;
+}
+
 void dfsPrefixTree(PrefixNode* curr, set<PrefixNode*> &partition, vector<FzipCode> &codes, int depth, ull prefix);
 
 
@@ -379,7 +390,7 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
     vector<FzipCode> ret;
     //Create tree
     cerr << "creating prefix tree" << endl;
-    ull allocationSize = sizeof(PrefixNode) * values.size() * 64;
+    ull allocationSize = sizeof(PrefixNode) * (values.size() * 64 + 1);
     PrefixNode* tree = (PrefixNode*)malloc(allocationSize);
     while(tree == nullptr){
         cerr << "malloc failed reallocating" << endl;
@@ -398,11 +409,13 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
         for(int j = 0; j < 64; ++j){
             if(value & (1LL << (63 - j))){
                 if(currNode->rightChild == nullptr){
+                    freePtr->clear();
                     currNode->rightChild = freePtr++;
                 }
                 currNode = currNode->rightChild;
             }else{
                 if(currNode->leftChild == nullptr){
+                    freePtr->clear();
                     currNode->leftChild = freePtr++;
                 }
                 currNode = currNode->leftChild;
@@ -410,6 +423,10 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
             currNode->frequency += frequency;
         }
     }
+    if(!checkBounds(root, freePtr))
+        cerr << "bounds failure" << endl;
+    else
+        cerr << "bounds ok" << endl;
     //cerr << "root frequency: " << tree[0].frequ
     int total = tree[0].frequency;
 
@@ -420,14 +437,17 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
     int currentCodeCount = 1;
     partition.push_back(root);
     cerr << "targetCodeCount: " << targetCodeCount << endl;
+    int i = 0;
     while(currentCodeCount < targetCodeCount && partition.size() != 0){
-        cerr << "currentCodeCount: " << currentCodeCount << endl;
+        cerr << "partition size: " << partition.size() << endl;
+        cerr << "iteration: " << i++ << endl;
+        cerr << "partion end: " << partition.back() << endl;
         if(currentCodeCount < 0){
             cerr << "wtf mate" << endl;
             exit(1);
         }
         if(partition.back()->leftChild == nullptr && partition.back()->rightChild == nullptr){
-            cerr << "option 1: " << endl;
+            cerr << "option 1" << endl;
             veryCommonValues.push_back(partition.back());
             partition.pop_back();
             //add to currentCodeCount
@@ -436,17 +456,17 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
             cerr << (targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total) << endl; // - 1;
             currentCodeCount += targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total; // - 1;
         }else if(partition.back()->leftChild == nullptr){
-            cerr << "option 2: " << endl;
+            cerr << "option 2" << endl;
             PrefixNode* tmp = partition.back()->rightChild;
             partition.pop_back();
             partition.push_back(tmp);
         }else if(partition.back()->rightChild == nullptr){
-            cerr << "option 3: " << endl;
+            cerr << "option 3" << endl;
             PrefixNode* tmp = partition.back()->leftChild;
             partition.pop_back();
             partition.push_back(tmp);
         }else{
-            cerr << "option 4: " << endl;
+            cerr << "option 4" << endl;
             PrefixNode* tmp0 = partition.back()->leftChild;
             PrefixNode* tmp1 = partition.back()->rightChild;
             partition.pop_back();
