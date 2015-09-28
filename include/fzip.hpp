@@ -232,7 +232,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     for(auto it = frequencies.begin(); it != frequencies.end(); ++it){
         //find code
         int index = prev(mapToPrefixCode.upper_bound(it->first))->second;
-        if(codes[index].prefixLength != 64 && commonSet.count(it->second))
+        if(codes[index].prefixLength != 64 && commonSet.count(it->first))
             index = codeFrequencies.size()-1;
         codeFrequencies[index].first += it->second;
     }
@@ -240,7 +240,8 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     cerr << "creating huffman codes" << endl;
     int total = 0;
     for(auto it = codeFrequencies.begin(); it != codeFrequencies.end(); ++it){
-        cerr << "freq before: " << it->first << endl;
+        total += it->first;
+        //cerr << "freq before: " << it->first << endl;
         if(it->first == 0){
             codeFrequencies.erase(it);
             it--;
@@ -250,8 +251,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             cerr << "frequency too small" << endl;
             it->first = rawStream.size() / pow(2,9) + 1;
         }
-        cerr << "freq after: " << it->first << endl;
-        total += it->first;
+        //cerr << "freq after: " << it->first << endl;
     }
     cerr << "total: " << total << endl;
     cerr << "check total: " << rawStream.size() << endl;
@@ -263,7 +263,16 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         if(it->codeLength > 9){
             cerr << "code greater than 9" << endl;
             exit(1);
+        }else if(it->codeLength == 0){
+            cerr << "code length equals 0" << endl;
+            exit(1);
         }
+    }
+    mapToPrefixCode.clear();
+    for(auto it = codes.begin(); it != codes.end(); ++it){
+        if(!it->isCommon)
+            mapToPrefixCode[it->prefix] = codeFrequencies.size();
+        i++;
     }
 
     //TODO: create final fzip codes
@@ -285,13 +294,16 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     ull argumentBuffer = 0;
     for(int i = 0; i < rawStream.size(); ++i){
         int index = prev(mapToPrefixCode.upper_bound(rawStreamUll[i]))->second;
-        if(codes[index].prefixLength != 64 && commonSet.count(rawStreamUll[i]))
+        if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
+        } else if(commonSet.count(rawStreamUll[i]))
             index = codes.size() - 1;
         codeBuffer |= (ull)codes[index].code << codeBufferEndBit;
         codeBufferEndBit += codes[index].codeLength;
         //cerr << "putting in code: " << i << endl;
         //printBits(codes[index].code);
         //printBits(codeBuffer);
+        //cerr << "wtf: " << codeBufferEndBit << endl;
+        //cerr << "code length: " << codes[index].codeLength << endl;
         if(codeBufferEndBit >= 64){
             codeStream.push_back(codeBuffer);
             codeBufferEndBit -= 64;
@@ -543,13 +555,17 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
     ull currArgumentStreamBit = 0;
     int i = 0;
     while(currCodeStreamBit < codeStreamBitLength){
-        //cerr << "decoding index: " << i++ << endl;
+        cerr << "decoding index: " << i << endl;
         //cerr << "at bit: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
         ull buffer = codeStream[currCodeStreamBit / 64] >> (currCodeStreamBit % 64);
         if(currCodeStreamBit % 64 > 64 - 9)
             buffer |= codeStream[currCodeStreamBit / 64 + 1] << (64 - currCodeStreamBit % 64);
         FzipCode code = codes[buffer & (ull)-1LL >> 64 - 9];
         ull value = code.prefix;
+        if(i == 0){
+            cerr << "prefix: " << hex << value << endl;
+            cerr << "prefix length: " << dec << code.prefixLength << endl;
+        }
         currCodeStreamBit += code.codeLength;
 
         buffer = argumentStream[currArgumentStreamBit / 64] >> (currArgumentStreamBit % 64);
@@ -557,6 +573,9 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
             buffer |= argumentStream[currArgumentStreamBit / 64 + 1] << (64 - currArgumentStreamBit % 64);
         if(code.prefixLength != 64)
             buffer &= (ull)-1LL >> (code.prefixLength);
+        if(i == 0){
+            cerr << "argument: " << hex << buffer << endl;
+        }
         if(code.isCommon){
             value = commons[buffer];
         }else if(code.prefixLength != 64)
@@ -564,11 +583,14 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
         currArgumentStreamBit += 64 - code.prefixLength;
         rawStream.push_back(*(double*)&value);
         //cerr << "value: " << (*(double*)&value) << endl;
+        if(i == 0){
+            cerr << "value: " << hex << value << endl;
+        }
+
+        i++;
     }
     if(currCodeStreamBit != codeStreamBitLength)
         cerr << "overflow: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
 }
-
-
 
 #endif

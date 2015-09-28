@@ -1,4 +1,4 @@
-all: fzip
+all: fzip floatDiff
 
 run : fzip
 	fzip -c < ./benchmark/example.bin > example.fz
@@ -34,5 +34,9 @@ install:
 clean:
 	rm -rf fzip source/*.o
 
+
+floatDiff: floatDiff.cpp
+	g++ -o floatDiff floatDiff.cpp
+
 vim:
-	vim -p makefile ./include/fzip.hpp ./source/fzip.cpp ../spMatrixHelp/rcr.hpp ./source/fzipCore.cpp
+	vim -p makefile ./include/fzip.hpp ./source/fzip.cpp floatDiff.cpp ../spMatrixHelp/rcr.hpp ./source/fzipCore.cpp
