@@ -88,6 +88,13 @@ struct FzipCode{
         code = 0;
         prefix = 0;
     }
+    void print(){
+        cerr << "codeLength: " << codeLength << endl;
+        cerr << "isCommon: " << isCommon << endl;
+        cerr << "prefixLength: " << prefixLength << endl;
+        cerr << "code: " << code << endl;
+        cerr << "prefix: " << prefix << endl;
+    }
 };
 
 void printBits(ull val){
@@ -124,6 +131,7 @@ bool fzipCompress(FzipOptions options){
     cerr << "compressing values" << endl;
     ull codeStreamBitLength, argumentStreamBitLength;
     fzipCompress(rawStream, commons, codes, codeStream, argumentStream, codeStreamBitLength, argumentStreamBitLength); //TODO: options
+    cerr << "what muther: " << codeStreamBitLength << endl;
     FzipHeader header;
     header.codeStreamBitLength = codeStreamBitLength;
     header.argumentStreamBitLength = argumentStreamBitLength;
@@ -269,9 +277,10 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         }
     }
     mapToPrefixCode.clear();
+    i = 0;
     for(auto it = codes.begin(); it != codes.end(); ++it){
         if(!it->isCommon)
-            mapToPrefixCode[it->prefix] = codeFrequencies.size();
+            mapToPrefixCode[it->prefix] = i;
         i++;
     }
 
@@ -293,17 +302,31 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     ull codeBuffer = 0;
     ull argumentBuffer = 0;
     for(int i = 0; i < rawStream.size(); ++i){
+        //cerr << "compressing i: " << i << endl;
         int index = prev(mapToPrefixCode.upper_bound(rawStreamUll[i]))->second;
+        //cerr << "index: " << index << "/" << codes.size() << endl;
+        if(mapToPrefixCode.upper_bound(rawStreamUll[i]) == mapToPrefixCode.begin()){
+            //cerr << "that's the problem" << endl;
+            index = codes.size() - 1;
+        }
         if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
         } else if(commonSet.count(rawStreamUll[i]))
             index = codes.size() - 1;
+//        cerr << "info: " << endl;
+//        cerr << "codes size: " << codes.size() << endl;
+//        cerr << "index: " << index << endl;
+//        codes[index].print();
+        if(codes[index].codeLength == 0){
+            cerr << "fail" << endl;
+            exit(1);
+        }
         codeBuffer |= (ull)codes[index].code << codeBufferEndBit;
         codeBufferEndBit += codes[index].codeLength;
-        //cerr << "putting in code: " << i << endl;
-        //printBits(codes[index].code);
-        //printBits(codeBuffer);
-        //cerr << "wtf: " << codeBufferEndBit << endl;
-        //cerr << "code length: " << codes[index].codeLength << endl;
+//        cerr << "putting in code: " << i << endl;
+//        printBits(codes[index].code);
+//        printBits(codeBuffer);
+//        cerr << "wtf: " << codeBufferEndBit << endl;
+//        cerr << "code length: " << codes[index].codeLength << endl;
         if(codeBufferEndBit >= 64){
             codeStream.push_back(codeBuffer);
             codeBufferEndBit -= 64;
@@ -554,8 +577,9 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
     ull currCodeStreamBit = 0;
     ull currArgumentStreamBit = 0;
     int i = 0;
+    cerr << "what the fuck: " << codeStreamBitLength << endl;
     while(currCodeStreamBit < codeStreamBitLength){
-        cerr << "decoding index: " << i << endl;
+        //cerr << "decoding index: " << i << endl;
         //cerr << "at bit: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
         ull buffer = codeStream[currCodeStreamBit / 64] >> (currCodeStreamBit % 64);
         if(currCodeStreamBit % 64 > 64 - 9)
