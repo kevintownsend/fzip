@@ -119,7 +119,7 @@ vector<double> readFloats(FILE* inputFile){
     return ret;
 }
 
-bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength);
+bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength, bool staticCommon = false);
 
 bool fzipCompress(FzipOptions options){
     vector<ull> commons;
@@ -188,7 +188,12 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
 
 vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies);
 
-bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength){
+bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength, bool staticCommon){
+    if(!staticCommon)
+        commons.clear();
+    codes.clear();
+    codeStream.clear();
+    argumentStream.clear();
     ull* rawStreamUll = (ull*)&rawStream[0];
     //int targetCodeCount = pow(2,8);
     cerr << "Sorting by repeats" << endl;
@@ -213,10 +218,12 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
 
     //create commons
     cerr << "creating the commons" << endl;
-    commons.resize((int)pow(2,13));
-    int i = 0;
-    for(auto it = frequencies.begin(); i < commons.size() && it != frequencies.end(); ++i, ++it){
-        commons[i] = it->second;
+    if(!staticCommon){
+        commons.resize((int)pow(2,13));
+        int i = 0;
+        for(auto it = frequencies.begin(); i < commons.size() && it != frequencies.end(); ++i, ++it){
+            commons[i] = it->second;
+        }
     }
     FzipCode commonCode;
     commonCode.isCommon = 1;
