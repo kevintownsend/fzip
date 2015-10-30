@@ -218,9 +218,9 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
 
     //create commons
     cerr << "creating the commons" << endl;
+    int i = 0;
     if(!staticCommon){
         commons.resize((int)pow(2,13));
-        int i = 0;
         for(auto it = frequencies.begin(); i < commons.size() && it != frequencies.end(); ++i, ++it){
             commons[i] = it->second;
         }
