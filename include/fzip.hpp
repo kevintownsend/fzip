@@ -13,16 +13,22 @@ using namespace std;
 
 #ifndef FZIP_H
 #define FZIP_H
+#define nullptr NULL
 
 struct FzipOptions{
     FILE* inputFile;
     FILE* outputFile;
-    bool compress = true;
-    int maxCodeLength = 9;
-    int targetCodeLength = this->maxCodeLength-1;
-    int commonCodes = 8192;
-    int log2CommonCodes = log2(this->commonCodes);
+    bool compress;
+    int maxCodeLength;
+    int targetCodeLength;
+    int commonCodes;
+    int log2CommonCodes;
     FzipOptions(int argc, char* argv[]){
+        compress = true;
+        maxCodeLength = 9;
+        targetCodeLength = this->maxCodeLength-1;
+        commonCodes = 8192;
+        log2CommonCodes = log2(this->commonCodes);
         int nonOptionArgs = 0;
         int currentArg = 1;
         while(currentArg != argc){
@@ -262,9 +268,9 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             it--;
             continue;
         }
-        if(it->first < rawStream.size() / pow(2,9)){
+        if(it->first < rawStream.size() / pow(2,8)){
             cerr << "frequency too small" << endl;
-            it->first = rawStream.size() / pow(2,9) + 1;
+            it->first = rawStream.size() / pow(2,8) + 1;
         }
         //cerr << "freq after: " << it->first << endl;
     }
@@ -376,10 +382,13 @@ struct HuffmanNode{
     HuffmanNode* rightChild;
     int frequency;
     FzipCode* codePtr;
-    bool traversed = 0;
+    bool traversed;
+    HuffmanNode(){
+        traversed = 0;
+    }
 };
 
-bool cmpHuffmanNode(HuffmanNode &a, HuffmanNode &b){
+bool cmpHuffmanNode(HuffmanNode a, HuffmanNode b){
     return a.frequency < b.frequency;
 }
 
@@ -442,10 +451,15 @@ vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
 }
 
 struct PrefixNode{
-    PrefixNode* leftChild = nullptr;
-    PrefixNode* rightChild = nullptr;
-    int frequency = 0;
-    clear(){
+    PrefixNode* leftChild;
+    PrefixNode* rightChild;
+    int frequency;
+    PrefixNode(){
+        leftChild = nullptr;
+        rightChild = nullptr;
+        frequency = 0;
+    }
+    void clear(){
         leftChild = nullptr;
         rightChild = nullptr;
         frequency = 0;
