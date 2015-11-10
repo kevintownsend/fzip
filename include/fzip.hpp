@@ -417,6 +417,8 @@ void setHuffmanCodesDFS(HuffmanNode* curr, ull code, ull depth){
 
 vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
     cerr << "code frequencies size: " << codeFrequencies.size() << endl;
+    if(codeFrequencies.size() == 0)
+        codeFrequencies.push_back(make_pair(0, FzipCode()));
     if(codeFrequencies.size() == 1)
         codeFrequencies.push_back(make_pair(0, FzipCode()));
     vector<FzipCode> ret;
