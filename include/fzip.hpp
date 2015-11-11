@@ -600,7 +600,6 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
     ull currCodeStreamBit = 0;
     ull currArgumentStreamBit = 0;
     int i = 0;
-    cerr << "what the fuck: " << codeStreamBitLength << endl;
     while(currCodeStreamBit < codeStreamBitLength){
         //cerr << "decoding index: " << i << endl;
         //cerr << "at bit: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
