@@ -371,7 +371,8 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     codeStream.push_back(codeBuffer);
     codeStream.push_back(0);
     argumentStream.push_back(argumentBuffer);
-    argumentStream.push_back(0);
+    for(int i = 0; i < 4; ++i)
+        argumentStream.push_back(0);
 
     codes = newCodes;
     return true;
