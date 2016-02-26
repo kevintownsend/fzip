@@ -40,13 +40,10 @@ struct FzipOptions{
                     this->targetCodeLength = atoi(arg.substr(arg.find("=")+1,arg.size()).c_str());
                 }
             }else if(arg[0] == '-'){
-                cerr << "found -" << endl;
                 if(arg.find("c") != string::npos){
-                    cerr << "found -c" << endl;
                     this->compress = true;
                 }
                 if(arg.find("d") != string::npos){
-                    cerr << "found -d" << endl;
                     this->compress = false;
                 }
             }else{
@@ -63,7 +60,6 @@ struct FzipOptions{
         if(nonOptionArgs < 2)
             this->outputFile = stdout;
         if(nonOptionArgs < 1){
-            cerr << "assigning input to stdin" << endl;
             this->inputFile = stdin;
         }
     }
@@ -133,11 +129,8 @@ bool fzipCompress(FzipOptions options){
     vector<ull> codeStream;
     vector<ull> argumentStream;
     vector<double> rawStream = readFloats(options.inputFile);
-    cerr << "size of rawStream: " << rawStream.size() << endl;
-    cerr << "compressing values" << endl;
     ull codeStreamBitLength, argumentStreamBitLength;
     fzipCompress(rawStream, commons, codes, codeStream, argumentStream, codeStreamBitLength, argumentStreamBitLength); //TODO: options
-    cerr << "what muther: " << codeStreamBitLength << endl;
     FzipHeader header;
     header.codeStreamBitLength = codeStreamBitLength;
     header.argumentStreamBitLength = argumentStreamBitLength;
@@ -178,11 +171,6 @@ bool fzipDecompress(FzipOptions options){
     fread(&codeStream[0], sizeof(ull), codeStream.size(), options.inputFile);
     fread(&argumentStream[0], sizeof(ull), argumentStream.size(), options.inputFile);
 
-    cerr << "codes size: " << codes.size() << endl;
-    cerr << "commons size: " << commons.size() << endl;
-    cerr << "codeStream size: " << codeStream.size() << endl;
-    cerr << "argumentStream size: " << argumentStream.size() << endl;
-
     vector<double> rawStream;
     fzipDecompress(rawStream, commons, codes, codeStream, argumentStream, header.codeStreamBitLength, header.argumentStreamBitLength);
     fwrite(&rawStream[0], sizeof(double), rawStream.size(), options.outputFile);
@@ -201,8 +189,6 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     codeStream.clear();
     argumentStream.clear();
     ull* rawStreamUll = (ull*)&rawStream[0];
-    //int targetCodeCount = pow(2,8);
-    cerr << "Sorting by repeats" << endl;
     //sort by repeats
     map<ull, ull> frequencies;
     for(auto it = rawStream.begin(); it != rawStream.end(); ++it){
@@ -216,14 +202,10 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     sort(sortedByFrequency.begin(), sortedByFrequency.end());
 
     //create first fzip codes
-    cerr << "creating initial codes" << endl;
     codes = createFzipCodes(sortedByFrequency, pow(2,8));
     //codes = createFzipCodes(sortedByFrequency, 4);
-    //TODO: look at initial codes
-    cerr << "codes size: " << codes.size() << endl;
 
     //create commons
-    cerr << "creating the commons" << endl;
     int i = 0;
     if(!staticCommon){
         commons.resize((int)pow(2,13));
@@ -237,7 +219,6 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     codes.push_back(commonCode);
 
     //TODO: update fzipcode frequencies
-    cerr << "updating fzipcode frequencies" << endl;
     vector<pair<ull, FzipCode> > codeFrequencies;
     map<ull, int> mapToPrefixCode;
     i = 0;
@@ -247,9 +228,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         codeFrequencies.push_back(make_pair(0, *it));
         i++;
     }
-    cerr << "creating commonSet" << endl;
     set<ull> commonSet(commons.begin(), commons.end());
-    cerr << "actually updating code frequencies" << endl;
     for(auto it = frequencies.begin(); it != frequencies.end(); ++it){
         //find code
         int index = prev(mapToPrefixCode.upper_bound(it->first))->second;
@@ -258,27 +237,18 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         codeFrequencies[index].first += it->second;
     }
     //use huffman codes
-    cerr << "creating huffman codes" << endl;
     int total = 0;
     for(auto it = codeFrequencies.begin(); it != codeFrequencies.end(); ++it){
         total += it->first;
-        //cerr << "freq before: " << it->first << endl;
         if(it->first == 0){
             codeFrequencies.erase(it);
             it--;
             continue;
         }
         if(it->first < rawStream.size() / pow(2,8)){
-            cerr << "frequency too small" << endl;
             it->first = rawStream.size() / pow(2,8) + 1;
         }
-        //cerr << "freq after: " << it->first << endl;
     }
-    cerr << "total: " << total << endl;
-    cerr << "check total: " << rawStream.size() << endl;
-    //TODO: force code to obey my command
-    cerr << "number of codes: " << codeFrequencies.size() << endl;
-    cerr << "min code length: " << log2(codeFrequencies.size()) << endl;
     codes = huffmanCoding(codeFrequencies);
     for(auto it = codes.begin(); it != codes.end(); ++it){
         if(it->codeLength > 9){
@@ -315,31 +285,19 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     ull codeBuffer = 0;
     ull argumentBuffer = 0;
     for(int i = 0; i < rawStream.size(); ++i){
-        //cerr << "compressing i: " << i << endl;
         int index = prev(mapToPrefixCode.upper_bound(rawStreamUll[i]))->second;
-        //cerr << "index: " << index << "/" << codes.size() << endl;
         if(mapToPrefixCode.upper_bound(rawStreamUll[i]) == mapToPrefixCode.begin()){
-            //cerr << "that's the problem" << endl;
             index = codes.size() - 1;
         }
         if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
         } else if(commonSet.count(rawStreamUll[i]))
             index = codes.size() - 1;
-//        cerr << "info: " << endl;
-//        cerr << "codes size: " << codes.size() << endl;
-//        cerr << "index: " << index << endl;
-//        codes[index].print();
         if(codes[index].codeLength == 0){
             cerr << "fail" << endl;
             exit(1);
         }
         codeBuffer |= (ull)codes[index].code << codeBufferEndBit;
         codeBufferEndBit += codes[index].codeLength;
-//        cerr << "putting in code: " << i << endl;
-//        printBits(codes[index].code);
-//        printBits(codeBuffer);
-//        cerr << "wtf: " << codeBufferEndBit << endl;
-//        cerr << "code length: " << codes[index].codeLength << endl;
         if(codeBufferEndBit >= 64){
             codeStream.push_back(codeBuffer);
             codeBufferEndBit -= 64;
@@ -395,7 +353,6 @@ bool cmpHuffmanNode(HuffmanNode a, HuffmanNode b){
 
 void setHuffmanCodesDFS(HuffmanNode* curr, ull code, ull depth){
     if(curr->traversed){
-        cerr << "loop encoutered" << endl;
         return;
     }
     curr->traversed = 1;
@@ -405,19 +362,15 @@ void setHuffmanCodesDFS(HuffmanNode* curr, ull code, ull depth){
         //return;
     }
     if(curr->codePtr != nullptr){
-        //cerr << "child" << endl;
-        //cerr << "codeptr: " << curr->codePtr << endl;
         curr->codePtr->code = code;
         curr->codePtr->codeLength = depth;
     }else{
-        //cerr << "not child" << endl;
         setHuffmanCodesDFS(curr->leftChild, code, depth + 1);
         setHuffmanCodesDFS(curr->rightChild, code | (1 << depth), depth + 1);
     }
 }
 
 vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
-    cerr << "code frequencies size: " << codeFrequencies.size() << endl;
     if(codeFrequencies.size() == 0)
         codeFrequencies.push_back(make_pair(0, FzipCode()));
     if(codeFrequencies.size() == 1)
@@ -430,14 +383,12 @@ vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
     tree.resize(2 * ret.size());
     HuffmanNode* beginning = &tree[0];
     HuffmanNode* ending = beginning + ret.size();
-    cerr << "creating initial nodes" << endl;
     for(int i = 0; i < ret.size(); ++i){
         (beginning + i)->frequency = codeFrequencies[i].first;
         (beginning + i)->codePtr = &ret[0] + i;
         (beginning + i)->leftChild = nullptr;
         (beginning + i)->rightChild = nullptr;
     }
-    cerr << "creating intermediate nodes" << endl;
     while(beginning + 1 < ending){
         sort(beginning, ending, cmpHuffmanNode);
         ending->leftChild = beginning;
@@ -447,8 +398,6 @@ vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
         ending++;
         beginning += 2;
     }
-    cerr << "size of tree: " << tree.size() << endl;
-    cerr << "setting huffman codes" << endl;
     setHuffmanCodesDFS(ending - 1, 0, 0);
     return ret;
 }
@@ -490,11 +439,9 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
     //TODO: fix this function
     vector<FzipCode> ret;
     //Create tree
-    cerr << "creating prefix tree" << endl;
     ull allocationSize = sizeof(PrefixNode) * (values.size() * 64 + 1);
     PrefixNode* tree = (PrefixNode*)malloc(allocationSize);
     while(tree == nullptr){
-        cerr << "malloc failed reallocating" << endl;
         allocationSize /= 2;
         tree = (PrefixNode*)malloc(allocationSize);
     }
@@ -526,18 +473,13 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
     }
     if(!checkBounds(root, freePtr))
         cerr << "bounds failure" << endl;
-    else
-        cerr << "bounds ok" << endl;
-    //cerr << "root frequency: " << tree[0].frequ
     int total = tree[0].frequency;
 
     //Create partition
-    cerr << "creating partition" << endl;
     vector<PrefixNode*> partition;
     vector<PrefixNode*> veryCommonValues;
     int currentCodeCount = 1;
     partition.push_back(root);
-    cerr << "targetCodeCount: " << targetCodeCount << endl;
     int i = 0;
     while(currentCodeCount < targetCodeCount && partition.size() != 0){
         if(currentCodeCount < 0){
@@ -547,10 +489,6 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
         if(partition.back()->leftChild == nullptr && partition.back()->rightChild == nullptr){
             veryCommonValues.push_back(partition.back());
             partition.pop_back();
-            //add to currentCodeCount
-            cerr << veryCommonValues.back()->frequency << endl; // - 1;
-            cerr << total << endl;
-            cerr << (targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total) << endl; // - 1;
             currentCodeCount += targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total; // - 1;
         }else if(partition.back()->leftChild == nullptr){
             PrefixNode* tmp = partition.back()->rightChild;
@@ -602,17 +540,11 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
     ull currArgumentStreamBit = 0;
     int i = 0;
     while(currCodeStreamBit < codeStreamBitLength){
-        //cerr << "decoding index: " << i << endl;
-        //cerr << "at bit: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
         ull buffer = codeStream[currCodeStreamBit / 64] >> (currCodeStreamBit % 64);
         if(currCodeStreamBit % 64 > 64 - 9)
             buffer |= codeStream[currCodeStreamBit / 64 + 1] << (64 - currCodeStreamBit % 64);
         FzipCode code = codes[buffer & (ull)-1LL >> 64 - 9];
         ull value = code.prefix;
-        if(i == 0){
-            cerr << "prefix: " << hex << value << endl;
-            cerr << "prefix length: " << dec << code.prefixLength << endl;
-        }
         currCodeStreamBit += code.codeLength;
 
         buffer = argumentStream[currArgumentStreamBit / 64] >> (currArgumentStreamBit % 64);
@@ -620,20 +552,12 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
             buffer |= argumentStream[currArgumentStreamBit / 64 + 1] << (64 - currArgumentStreamBit % 64);
         if(code.prefixLength != 64)
             buffer &= (ull)-1LL >> (code.prefixLength);
-        if(i == 0){
-            cerr << "argument: " << hex << buffer << endl;
-        }
         if(code.isCommon){
             value = commons[buffer];
         }else if(code.prefixLength != 64)
             value |= buffer;
         currArgumentStreamBit += 64 - code.prefixLength;
         rawStream.push_back(*(double*)&value);
-        //cerr << "value: " << (*(double*)&value) << endl;
-        if(i == 0){
-            cerr << "value: " << hex << value << endl;
-        }
-
         i++;
     }
     if(currCodeStreamBit != codeStreamBitLength)
