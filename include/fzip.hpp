@@ -95,7 +95,7 @@ struct FzipCode{
         cerr << "isCommon: " << isCommon << endl;
         cerr << "prefixLength: " << prefixLength << endl;
         cerr << "code: " << code << endl;
-        cerr << "prefix: " << prefix << endl;
+        cerr << "prefix: " << hex << prefix << endl << dec;
     }
 };
 
@@ -200,6 +200,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         sortedByFrequency.push_back(make_pair(it->second, it->first));
     }
     sort(sortedByFrequency.begin(), sortedByFrequency.end());
+    cerr << "sortedByFrequency size: " << sortedByFrequency.size() << endl;
 
     //create first fzip codes
     codes = createFzipCodes(sortedByFrequency, pow(2,8));
@@ -217,6 +218,11 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     commonCode.isCommon = 1;
     commonCode.prefixLength = 64 - 13;
     codes.push_back(commonCode);
+    cerr << "number of codes: " << codes.size() << " codes: " << endl;
+    for(int i = 0; i < codes.size(); ++i){
+        codes[i].print();
+    }
+    cerr << endl;
 
     //TODO: update fzipcode frequencies
     vector<pair<ull, FzipCode> > codeFrequencies;
@@ -249,6 +255,11 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             it->first = rawStream.size() / pow(2,8) + 1;
         }
     }
+    cerr << "codeFrequencies.size: " << codeFrequencies.size() << endl;
+    for(int i = 0; i < codeFrequencies.size(); ++i){
+        cerr << codeFrequencies[i].first << ": " << endl;
+        codeFrequencies[i].second.print();
+    }
     codes = huffmanCoding(codeFrequencies);
     for(auto it = codes.begin(); it != codes.end(); ++it){
         if(it->codeLength > 9){
@@ -259,6 +270,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             exit(1);
         }
     }
+
     mapToPrefixCode.clear();
     i = 0;
     for(auto it = codes.begin(); it != codes.end(); ++it){
@@ -266,6 +278,12 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             mapToPrefixCode[it->prefix] = i;
         i++;
     }
+
+    cerr << "number of codes: " << codes.size() << " codes: " << endl;
+    for(int i = 0; i < codes.size(); ++i){
+        codes[i].print();
+    }
+    cerr << endl;
 
     //TODO: create final fzip codes
     vector<FzipCode> newCodes;
@@ -373,8 +391,8 @@ void setHuffmanCodesDFS(HuffmanNode* curr, ull code, ull depth){
 vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
     if(codeFrequencies.size() == 0)
         codeFrequencies.push_back(make_pair(0, FzipCode()));
-    if(codeFrequencies.size() == 1)
-        codeFrequencies.push_back(make_pair(0, FzipCode()));
+    //if(codeFrequencies.size() == 1)
+    //    codeFrequencies.push_back(make_pair(0, FzipCode()));
     vector<FzipCode> ret;
     for(int i = 0; i < codeFrequencies.size(); ++i){
         ret.push_back(codeFrequencies[i].second);
@@ -399,6 +417,9 @@ vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
         beginning += 2;
     }
     setHuffmanCodesDFS(ending - 1, 0, 0);
+    if(ret.size() == 1){
+        ret[0].codeLength = 1;
+    }
     return ret;
 }
 
@@ -489,7 +510,9 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
         if(partition.back()->leftChild == nullptr && partition.back()->rightChild == nullptr){
             veryCommonValues.push_back(partition.back());
             partition.pop_back();
-            currentCodeCount += targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total; // - 1;
+            int amountToAdd = targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total - 1.0;
+            if(amountToAdd > 0)
+                currentCodeCount += amountToAdd;
         }else if(partition.back()->leftChild == nullptr){
             PrefixNode* tmp = partition.back()->rightChild;
             partition.pop_back();
@@ -564,6 +587,7 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
         cerr << "overflow: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
     if(currArgumentStreamBit != argumentStreamBitLength)
         cerr << "Argument stream mismatch: " << currArgumentStreamBit << "/" << argumentStreamBitLength << endl;
+    cerr << "Argument stream : " << currArgumentStreamBit << "/" << argumentStreamBitLength << endl;
 }
 
 #endif
