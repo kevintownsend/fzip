@@ -562,6 +562,8 @@ bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<Fzip
     }
     if(currCodeStreamBit != codeStreamBitLength)
         cerr << "overflow: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
+    if(currArgumentStreamBit != argumentStreamBitLength)
+        cerr << "Argument stream mismatch: " << currArgumentStreamBit << "/" << argumentStreamBitLength << endl;
 }
 
 #endif
