@@ -218,11 +218,6 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     commonCode.isCommon = 1;
     commonCode.prefixLength = 64 - 13;
     codes.push_back(commonCode);
-    cerr << "number of codes: " << codes.size() << " codes: " << endl;
-    for(int i = 0; i < codes.size(); ++i){
-        codes[i].print();
-    }
-    cerr << endl;
 
     //TODO: update fzipcode frequencies
     vector<pair<ull, FzipCode> > codeFrequencies;
@@ -255,11 +250,6 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             it->first = rawStream.size() / pow(2,8) + 1;
         }
     }
-    cerr << "codeFrequencies.size: " << codeFrequencies.size() << endl;
-    for(int i = 0; i < codeFrequencies.size(); ++i){
-        cerr << codeFrequencies[i].first << ": " << endl;
-        codeFrequencies[i].second.print();
-    }
     codes = huffmanCoding(codeFrequencies);
     for(auto it = codes.begin(); it != codes.end(); ++it){
         if(it->codeLength > 9){
@@ -278,12 +268,6 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             mapToPrefixCode[it->prefix] = i;
         i++;
     }
-
-    cerr << "number of codes: " << codes.size() << " codes: " << endl;
-    for(int i = 0; i < codes.size(); ++i){
-        codes[i].print();
-    }
-    cerr << endl;
 
     //TODO: create final fzip codes
     vector<FzipCode> newCodes;
