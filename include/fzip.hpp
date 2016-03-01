@@ -262,10 +262,13 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     }
 
     mapToPrefixCode.clear();
+    int indexToCommonCode = 0;
     i = 0;
     for(auto it = codes.begin(); it != codes.end(); ++it){
         if(!it->isCommon)
             mapToPrefixCode[it->prefix] = i;
+        else
+            indexToCommonCode = i;
         i++;
     }
 
@@ -289,11 +292,11 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     for(int i = 0; i < rawStream.size(); ++i){
         int index = prev(mapToPrefixCode.upper_bound(rawStreamUll[i]))->second;
         if(mapToPrefixCode.upper_bound(rawStreamUll[i]) == mapToPrefixCode.begin()){
-            index = codes.size() - 1;
+            index = indexToCommonCode;
         }
         if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
         } else if(commonSet.count(rawStreamUll[i]))
-            index = codes.size() - 1;
+            index = indexToCommonCode;
         if(codes[index].codeLength == 0){
             cerr << "fail" << endl;
             exit(1);
