@@ -297,7 +297,6 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
         } else if(commonSet.count(rawStreamUll[i])){
             index = indexToCommonCode;
-            cerr << "here" << endl;
         }else{
         }
         if(codes[index].codeLength == 0){
