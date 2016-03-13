@@ -211,7 +211,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     if(!staticCommon){
         commons.resize((int)pow(2,13));
         for(auto it = frequencies.begin(); i < commons.size() && it != frequencies.end(); ++i, ++it){
-            commons[i] = it->second;
+            commons[i] = it->first;
         }
     }
     FzipCode commonCode;
@@ -295,8 +295,11 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             index = indexToCommonCode;
         }
         if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
-        } else if(commonSet.count(rawStreamUll[i]))
+        } else if(commonSet.count(rawStreamUll[i])){
             index = indexToCommonCode;
+            cerr << "here" << endl;
+        }else{
+        }
         if(codes[index].codeLength == 0){
             cerr << "fail" << endl;
             exit(1);
