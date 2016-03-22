@@ -14,7 +14,7 @@ run3: fzip
 
 
 fzip: source/fzip.cpp source/common.o source/sortByRepeats.o include/fzip.hpp
-	g++ -g -std=c++11 -Iinclude -o fzip source/fzip.cpp
+	g++ -g -std=c++0x -Iinclude -o fzip source/fzip.cpp
 
 source/arithmeticFloatingPointCompression.o: source/arithmeticFloatingPointCompression.cpp
 	g++ -Iinclude -L${HOME}/lib -ltardis -I${HOME}/include -Iinclude -c -std=c++0x source/arithmeticFloatingPointCompression.cpp -o source/arithmeticFloatingPointCompression.o
