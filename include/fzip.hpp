@@ -294,7 +294,7 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
         if(mapToPrefixCode.upper_bound(rawStreamUll[i]) == mapToPrefixCode.begin()){
             index = indexToCommonCode;
         }
-        if(codes[index].prefixLength == 64 && codes[index].prefix == rawStreamUll[i]){
+        if((codes[index].prefixLength > (64 - 13)) && codes[index].prefix == rawStreamUll[i]){
         } else if(commonSet.count(rawStreamUll[i])){
             index = indexToCommonCode;
         }else{
@@ -519,6 +519,19 @@ vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCode
             currentCodeCount++;
         }
         sort(partition.begin(), partition.end(), sortByFrequency);
+    }
+    for(int i = 0; i < partition.size(); ++i){
+        while(1){
+            if(partition[i]->leftChild == nullptr && partition[i]->rightChild == nullptr){
+                break;
+            }else if(partition[i]->leftChild != nullptr && partition[i]->rightChild != nullptr){
+                break;
+            }else if(partition[i]->leftChild != nullptr && partition[i]->rightChild == nullptr){
+                partition[i] = partition[i]->leftChild;
+            }else if(partition[i]->leftChild == nullptr && partition[i]->rightChild != nullptr){
+                partition[i] = partition[i]->rightChild;
+            }
+        }
     }
     set<PrefixNode*> partitionSet;
     for(int i = 0; i < partition.size(); ++i){
