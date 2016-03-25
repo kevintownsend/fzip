@@ -202,6 +202,9 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     sort(sortedByFrequency.begin(), sortedByFrequency.end());
     cerr << "sortedByFrequency size: " << sortedByFrequency.size() << endl;
 
+    //debugging
+    //for(ull i = 0; i < sorted
+
     //create first fzip codes
     codes = createFzipCodes(sortedByFrequency, pow(2,8));
     //codes = createFzipCodes(sortedByFrequency, 4);
@@ -210,8 +213,8 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     int i = 0;
     if(!staticCommon){
         commons.resize((int)pow(2,13));
-        for(auto it = frequencies.begin(); i < commons.size() && it != frequencies.end(); ++i, ++it){
-            commons[i] = it->first;
+        for(auto it = sortedByFrequency.rbegin(); i < commons.size() && it != sortedByFrequency.rend(); ++i, ++it){
+            commons[i] = it->second;
         }
     }
     FzipCode commonCode;
@@ -289,15 +292,21 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
 
     ull codeBuffer = 0;
     ull argumentBuffer = 0;
+    ull countVeryCommons = 0;
+    ull countCommons = 0;
+    ull countNotCommons = 0;
     for(int i = 0; i < rawStream.size(); ++i){
         int index = prev(mapToPrefixCode.upper_bound(rawStreamUll[i]))->second;
         if(mapToPrefixCode.upper_bound(rawStreamUll[i]) == mapToPrefixCode.begin()){
             index = indexToCommonCode;
         }
         if((codes[index].prefixLength > (64 - 13)) && codes[index].prefix == rawStreamUll[i]){
+            countVeryCommons++;
         } else if(commonSet.count(rawStreamUll[i])){
             index = indexToCommonCode;
+            countCommons++;
         }else{
+            countNotCommons++;
         }
         if(codes[index].codeLength == 0){
             cerr << "fail" << endl;
@@ -331,6 +340,9 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
             argumentBuffer = argument >> (argumentLength - argumentBufferEndBit);
         }
     }
+    cerr << "Very common count: " << countVeryCommons << endl;
+    cerr << "Common count: " << countCommons << endl;
+    cerr << "Not common count: " << countNotCommons << endl;
     codeStreamBitLength = codeStream.size() * 64 + codeBufferEndBit;
     argumentStreamBitLength = argumentStream.size() * 64 + argumentBufferEndBit;
     codeStream.push_back(codeBuffer);
