@@ -242,18 +242,34 @@ bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCo
     }
     //use huffman codes
     int total = 0;
-    for(auto it = codeFrequencies.begin(); it != codeFrequencies.end(); ++it){
-        total += it->first;
-        if(it->first == 0){
-            codeFrequencies.erase(it);
-            it--;
-            continue;
+    int bitLengthTarget = 8;
+    bool valid = false;
+    while(!valid){
+        for(auto it = codeFrequencies.begin(); it != codeFrequencies.end(); ++it){
+            total += it->first;
+            if(it->first == 0){
+                codeFrequencies.erase(it);
+                it--;
+                continue;
+            }
+            if(it->first < rawStream.size() / pow(2,bitLengthTarget)){
+                it->first = rawStream.size() / pow(2,bitLengthTarget) + 1;
+            }
         }
-        if(it->first < rawStream.size() / pow(2,8)){
-            it->first = rawStream.size() / pow(2,8) + 1;
+        codes = huffmanCoding(codeFrequencies);
+        valid = true;
+        for(auto it = codes.begin(); it != codes.end(); ++it){
+            if(it->codeLength > 9){
+                cerr << "code greater than 9" << endl;
+                valid = false;
+                bitLengthTarget--;
+            }else if(it->codeLength == 0){
+                cerr << "code length equals 0" << endl;
+                exit(1);
+            }
         }
     }
-    codes = huffmanCoding(codeFrequencies);
+
     for(auto it = codes.begin(); it != codes.end(); ++it){
         if(it->codeLength > 9){
             cerr << "code greater than 9" << endl;
