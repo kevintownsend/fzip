@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cxx: [g++, clang++]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build & test (Release)
+        run: make clean && make CXX=${{ matrix.cxx }} all lib test
+
+      - name: Build & test (ASan + UBSan)
+        run: make clean && make CXX=${{ matrix.cxx }} SANITIZE=1 all test
+
+      - name: Run benchmark smoke verification
+        run: make clean && make CXX=${{ matrix.cxx }} bench
+
+      - name: Staged install check
+        run: make clean && make CXX=${{ matrix.cxx }} DESTDIR=/tmp/fzip-install PREFIX=/usr install

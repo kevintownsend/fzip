@@ -21,7 +21,7 @@ CXXFLAGS := $(CXXFLAGS_COMMON) $(OPTFLAGS) $(EXTRA_CXXFLAGS)
 BUILD_DIR := build
 LIB_OBJS := $(BUILD_DIR)/fzip.o
 CLI_OBJS := $(BUILD_DIR)/main.o
-TEST_SRCS := $(wildcard tests/*.cpp)
+TEST_SRCS := $(filter-out tests/fuzz_%,$(wildcard tests/*.cpp))
 BENCH_SRCS := $(wildcard benchmark/*.cpp)
 
 .PHONY: all lib test bench install clean
