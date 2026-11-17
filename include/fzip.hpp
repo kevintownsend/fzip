@@ -1,73 +1,279 @@
-
-#include <stdio.h>
-#include <math.h>
-#include <string>
-#include <stdlib.h>
-#include <vector>
-#include <map>
-#include <algorithm>
-#include <set>
-#include <iostream>
-
-using namespace std;
-
+/**
+ * Copyright 2014 Kevin Townsend
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 #ifndef FZIP_H
 #define FZIP_H
-#define nullptr NULL
 
-struct FzipOptions{
-    FILE* inputFile;
-    FILE* outputFile;
-    bool compress;
-    int maxCodeLength;
-    int targetCodeLength;
-    int commonCodes;
-    int log2CommonCodes;
-    FzipOptions(int argc, char* argv[]){
-        compress = true;
-        maxCodeLength = 9;
-        targetCodeLength = this->maxCodeLength-1;
-        commonCodes = 8192;
-        log2CommonCodes = log2(this->commonCodes);
-        int nonOptionArgs = 0;
-        int currentArg = 1;
-        while(currentArg != argc){
-            string arg(argv[currentArg]);
-            if(arg.substr(0,2) == "--"){
-                if(arg.find("MaxCodeLength")){
-                    this->maxCodeLength = atoi(arg.substr(arg.find("=")+1,arg.size()).c_str());
-                } else if(arg.find("TargetCodeLength")){
-                    this->targetCodeLength = atoi(arg.substr(arg.find("=")+1,arg.size()).c_str());
-                }
-            }else if(arg[0] == '-'){
-                if(arg.find("c") != string::npos){
-                    this->compress = true;
-                }
-                if(arg.find("d") != string::npos){
-                    this->compress = false;
-                }
-            }else{
-                if(nonOptionArgs == 0)
-                    inputFile = fopen(arg.c_str(),"r");
-                else if(nonOptionArgs == 1)
-                    outputFile = fopen(arg.c_str(),"w");
-                else
-                    cerr << "this should not be reached" << endl;
-                nonOptionArgs++;
-            }
-            currentArg++;
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <limits>
+#include <map>
+#include <memory>
+#include <queue>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <vector>
+
+typedef unsigned long long ull;
+
+static_assert(sizeof(ull) == 8, "ull must be 64 bits");
+static_assert(sizeof(double) == 8, "IEEE-754 64-bit double required");
+
+namespace fzip_detail {
+
+inline ull doubleToBits(double value) {
+    ull bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+inline double bitsToDouble(ull bits) {
+    double value = 0.0;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+inline bool startsWith(const std::string& s, const char* prefix) {
+    std::size_t len = std::strlen(prefix);
+    return s.size() >= len && s.compare(0, len, prefix) == 0;
+}
+
+inline bool parseIntStrict(const std::string& s, int& out) {
+    if (s.empty()) {
+        return false;
+    }
+    char* endPtr = NULL;
+    errno = 0;
+    long val = std::strtol(s.c_str(), &endPtr, 10);
+    if (errno != 0 || endPtr == s.c_str() || *endPtr != '\0') {
+        return false;
+    }
+    if (val < std::numeric_limits<int>::min() || val > std::numeric_limits<int>::max()) {
+        return false;
+    }
+    out = static_cast<int>(val);
+    return true;
+}
+
+inline void appendBits(std::vector<ull>& stream, ull& buffer, int& endBit, ull bits, int width) {
+    if (width <= 0) {
+        return;
+    }
+    if (width < 64) {
+        bits &= (1ULL << width) - 1ULL;
+    }
+    buffer |= (bits << endBit);
+    endBit += width;
+    if (endBit >= 64) {
+        stream.push_back(buffer);
+        endBit -= 64;
+        int consumed = width - endBit;
+        buffer = (consumed < 64) ? (bits >> consumed) : 0ULL;
+    }
+}
+
+inline ull readBits(const std::vector<ull>& stream, ull bitPos, int width) {
+    if (width <= 0) {
+        return 0ULL;
+    }
+    std::size_t wordIdx = static_cast<std::size_t>(bitPos / 64ULL);
+    int bitOffset = static_cast<int>(bitPos % 64ULL);
+    ull val = (wordIdx < stream.size()) ? (stream[wordIdx] >> bitOffset) : 0ULL;
+    if (bitOffset > 0 && bitOffset + width > 64 && (wordIdx + 1) < stream.size()) {
+        val |= stream[wordIdx + 1] << (64 - bitOffset);
+    }
+    if (width < 64) {
+        val &= (1ULL << width) - 1ULL;
+    }
+    return val;
+}
+
+inline bool writeAll(const void* data, std::size_t elemSize, std::size_t count, FILE* out) {
+    if (count == 0) {
+        return true;
+    }
+    return std::fwrite(data, elemSize, count, out) == count;
+}
+
+template <typename T>
+inline bool readExactVec(FILE* in, std::vector<T>& out, std::size_t count) {
+    out.clear();
+    if (count == 0) {
+        return true;
+    }
+    const std::size_t kChunk = 65536;
+    std::vector<T> chunk(std::min(count, kChunk));
+    std::size_t remaining = count;
+    while (remaining > 0) {
+        std::size_t want = std::min(remaining, kChunk);
+        std::size_t got = std::fread(&chunk[0], sizeof(T), want, in);
+        if (got != want) {
+            return false;
         }
-        if(nonOptionArgs < 2)
-            this->outputFile = stdout;
-        if(nonOptionArgs < 1){
-            this->inputFile = stdin;
+        out.insert(out.end(), chunk.begin(), chunk.begin() + static_cast<std::ptrdiff_t>(want));
+        remaining -= want;
+    }
+    return true;
+}
+
+struct NoopFileCloser {
+    void operator()(FILE*) const {}
+};
+
+struct FileCloser {
+    void operator()(FILE* f) const {
+        if (f != NULL) {
+            std::fclose(f);
         }
     }
 };
 
-typedef unsigned long long ull;
+}  // namespace fzip_detail
 
-struct FzipHeader{
+struct FzipOptions {
+    FILE* inputFile;
+    FILE* outputFile;
+    std::shared_ptr<FILE> inputHandle;
+    std::shared_ptr<FILE> outputHandle;
+    bool compress;
+    bool valid;
+    bool showHelp;
+    int maxCodeLength;
+    int targetCodeLength;
+    int commonCodes;
+    int log2CommonCodes;
+
+    FzipOptions(int argc, char* argv[])
+        : inputFile(stdin),
+          outputFile(stdout),
+          inputHandle(stdin, fzip_detail::NoopFileCloser()),
+          outputHandle(stdout, fzip_detail::NoopFileCloser()),
+          compress(true),
+          valid(true),
+          showHelp(false),
+          maxCodeLength(9),
+          targetCodeLength(8),
+          commonCodes(8192),
+          log2CommonCodes(13) {
+        bool seenCompress = false;
+        bool seenDecompress = false;
+        bool hasTargetCodeLength = false;
+        int nonOptionArgs = 0;
+
+        for (int currentArg = 1; currentArg < argc; ++currentArg) {
+            std::string arg(argv[currentArg]);
+            if (arg == "-h" || arg == "--help") {
+                showHelp = true;
+                return;
+            }
+            if (fzip_detail::startsWith(arg, "--")) {
+                if (fzip_detail::startsWith(arg, "--MaxCodeLength=")) {
+                    std::string valStr = arg.substr(std::strlen("--MaxCodeLength="));
+                    if (!fzip_detail::parseIntStrict(valStr, maxCodeLength) ||
+                        maxCodeLength < 1 || maxCodeLength > 9) {
+                        std::cerr << "Error: --MaxCodeLength must be an integer in [1, 9]\n";
+                        valid = false;
+                        return;
+                    }
+                } else if (fzip_detail::startsWith(arg, "--TargetCodeLength=")) {
+                    std::string valStr = arg.substr(std::strlen("--TargetCodeLength="));
+                    if (!fzip_detail::parseIntStrict(valStr, targetCodeLength) ||
+                        targetCodeLength < 0 || targetCodeLength > 9) {
+                        std::cerr << "Error: --TargetCodeLength must be an integer in [0, 9]\n";
+                        valid = false;
+                        return;
+                    }
+                    hasTargetCodeLength = true;
+                } else {
+                    std::cerr << "Error: unknown option '" << arg << "'\n";
+                    valid = false;
+                    return;
+                }
+            } else if (arg.size() > 1 && arg[0] == '-') {
+                for (std::size_t i = 1; i < arg.size(); ++i) {
+                    if (arg[i] == 'c') {
+                        compress = true;
+                        seenCompress = true;
+                    } else if (arg[i] == 'd') {
+                        compress = false;
+                        seenDecompress = true;
+                    } else if (arg[i] == 'h') {
+                        showHelp = true;
+                        return;
+                    } else {
+                        std::cerr << "Error: unknown option '-" << arg[i] << "'\n";
+                        valid = false;
+                        return;
+                    }
+                }
+                if (seenCompress && seenDecompress) {
+                    std::cerr << "Error: cannot specify both -c and -d\n";
+                    valid = false;
+                    return;
+                }
+            } else {
+                if (nonOptionArgs == 0) {
+                    FILE* f = std::fopen(arg.c_str(), "rb");
+                    if (f == NULL) {
+                        std::cerr << "Error: failed to open input file '" << arg
+                                  << "': " << std::strerror(errno) << "\n";
+                        valid = false;
+                        return;
+                    }
+                    inputHandle.reset(f, fzip_detail::FileCloser());
+                    inputFile = f;
+                } else if (nonOptionArgs == 1) {
+                    FILE* f = std::fopen(arg.c_str(), "wb");
+                    if (f == NULL) {
+                        std::cerr << "Error: failed to open output file '" << arg
+                                  << "': " << std::strerror(errno) << "\n";
+                        valid = false;
+                        return;
+                    }
+                    outputHandle.reset(f, fzip_detail::FileCloser());
+                    outputFile = f;
+                } else {
+                    std::cerr << "Error: too many positional arguments\n";
+                    valid = false;
+                    return;
+                }
+                nonOptionArgs++;
+            }
+        }
+
+        if (!hasTargetCodeLength) {
+            targetCodeLength = std::max(0, maxCodeLength - 1);
+        } else if (targetCodeLength > maxCodeLength) {
+            std::cerr << "Error: --TargetCodeLength (" << targetCodeLength
+                      << ") cannot exceed --MaxCodeLength (" << maxCodeLength << ")\n";
+            valid = false;
+            return;
+        }
+    }
+};
+
+struct FzipHeader {
     ull r0;
     ull codeStreamBitLength;
     ull argumentStreamBitLength;
@@ -78,63 +284,127 @@ struct FzipHeader{
     ull argumentStreamPointer;
     ull size;
     ull r2[11];
+
+    FzipHeader()
+        : r0(0),
+          codeStreamBitLength(0),
+          argumentStreamBitLength(0),
+          r1(),
+          codesPointer(0),
+          commonPointer(0),
+          codeStreamPointer(0),
+          argumentStreamPointer(0),
+          size(0),
+          r2() {}
 };
 
-struct FzipCode{
+static_assert(sizeof(FzipHeader) == 256, "FzipHeader must remain 256 bytes");
+
+struct FzipCode {
     ull codeLength : 4, isCommon : 1, prefixLength : 7, code : 9;
     ull prefix;
-    FzipCode(){
-        codeLength = 0;
-        isCommon = 0;
-        prefixLength = 0;
-        code = 0;
-        prefix = 0;
-    }
-    void print(){
-        cerr << "codeLength: " << codeLength << endl;
-        cerr << "isCommon: " << isCommon << endl;
-        cerr << "prefixLength: " << prefixLength << endl;
-        cerr << "code: " << code << endl;
-        cerr << "prefix: " << hex << prefix << endl << dec;
+    FzipCode()
+        : codeLength(0), isCommon(0), prefixLength(0), code(0), prefix(0) {}
+    void print() const {
+        std::cerr << "codeLength: " << codeLength << "\n"
+                  << "isCommon: " << isCommon << "\n"
+                  << "prefixLength: " << prefixLength << "\n"
+                  << "code: " << code << "\n"
+                  << "prefix: " << std::hex << prefix << std::dec << "\n";
     }
 };
 
-void printBits(ull val){
-    for(int i = 0; i < 64; ++i){
-        if(val & 1LL << i)
-            cerr << "1";
-        else
-            cerr << "0";
+inline void printBits(ull val) {
+    for (int i = 0; i < 64; ++i) {
+        std::cerr << ((val & (1ULL << i)) ? '1' : '0');
     }
-    cerr << endl;
+    std::cerr << "\n";
 }
 
-
-vector<double> readFloats(FILE* inputFile){
-    vector<double> ret;
-    double tmp;
-    fread(&tmp, 8, 1, inputFile);
-    while(!feof(inputFile)){
-        ret.push_back(tmp);
-        fread(&tmp, 8, 1, inputFile);
+inline bool readFloats(FILE* inputFile, std::vector<double>& out) {
+    out.clear();
+    if (inputFile == NULL) {
+        return false;
     }
+    unsigned char buf[8];
+    while (true) {
+        std::size_t n = std::fread(buf, 1, sizeof(buf), inputFile);
+        if (n == sizeof(buf)) {
+            double val = 0.0;
+            std::memcpy(&val, buf, sizeof(val));
+            out.push_back(val);
+        } else if (n == 0) {
+            if (std::ferror(inputFile)) {
+                std::cerr << "Error: failed reading input stream\n";
+                return false;
+            }
+            return true;
+        } else {
+            std::cerr << "Error: input byte count is not a multiple of 8 (" << n
+                      << " trailing bytes)\n";
+            return false;
+        }
+    }
+}
+
+inline std::vector<double> readFloats(FILE* inputFile) {
+    std::vector<double> ret;
+    readFloats(inputFile, ret);
     return ret;
 }
 
-bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength, bool staticCommon = false);
+inline std::vector<FzipCode> createFzipCodes(const std::vector<std::pair<ull, ull> >& values,
+                                             std::size_t targetCodeCount);
 
-bool fzipCompress(FzipOptions options){
-    vector<ull> commons;
-    vector<FzipCode> codes;
-    vector<ull> codeStream;
-    vector<ull> argumentStream;
-    vector<double> rawStream = readFloats(options.inputFile);
-    ull codeStreamBitLength, argumentStreamBitLength;
-    fzipCompress(rawStream, commons, codes, codeStream, argumentStream, codeStreamBitLength, argumentStreamBitLength); //TODO: options
+inline std::vector<FzipCode> huffmanCoding(
+    const std::vector<std::pair<ull, FzipCode> >& codeFrequencies,
+    int maxCodeLength = 9);
+
+inline bool fzipCompress(std::vector<double>& rawStream,
+                         std::vector<ull>& commons,
+                         std::vector<FzipCode>& codes,
+                         std::vector<ull>& codeStream,
+                         std::vector<ull>& argumentStream,
+                         ull& codeStreamBitLength,
+                         ull& argumentStreamBitLength,
+                         bool staticCommon = false,
+                         int maxCodeLength = 9,
+                         int targetCodeLength = 8,
+                         int commonBits = 13);
+
+inline bool fzipDecompress(std::vector<double>& rawStream,
+                           std::vector<ull>& commons,
+                           std::vector<FzipCode>& codes,
+                           std::vector<ull>& codeStream,
+                           std::vector<ull>& argumentStream,
+                           ull& codeStreamBitLength,
+                           ull& argumentStreamBitLength);
+
+inline bool fzipCompress(const FzipOptions& options) {
+    if (!options.valid || options.inputFile == NULL || options.outputFile == NULL) {
+        return false;
+    }
+    std::vector<double> rawStream;
+    if (!readFloats(options.inputFile, rawStream)) {
+        return false;
+    }
+    std::vector<ull> commons;
+    std::vector<FzipCode> codes;
+    std::vector<ull> codeStream;
+    std::vector<ull> argumentStream;
+    ull codeStreamBitLength = 0;
+    ull argumentStreamBitLength = 0;
+    if (!fzipCompress(rawStream, commons, codes, codeStream, argumentStream,
+                      codeStreamBitLength, argumentStreamBitLength, false,
+                      options.maxCodeLength, options.targetCodeLength,
+                      options.log2CommonCodes)) {
+        return false;
+    }
+
     FzipHeader header;
     header.codeStreamBitLength = codeStreamBitLength;
     header.argumentStreamBitLength = argumentStreamBitLength;
-    size_t tmp = sizeof(FzipHeader);
+    std::size_t tmp = sizeof(FzipHeader);
     header.codesPointer = tmp;
     tmp += codes.size() * sizeof(FzipCode);
     header.commonPointer = tmp;
@@ -144,480 +414,624 @@ bool fzipCompress(FzipOptions options){
     header.argumentStreamPointer = tmp;
     tmp += argumentStream.size() * sizeof(ull);
     header.size = tmp;
-    fwrite(&header, sizeof(FzipHeader), 1, options.outputFile);
-    fwrite(&codes[0], sizeof(FzipCode), codes.size(), options.outputFile);
-    fwrite(&commons[0], sizeof(ull), commons.size(), options.outputFile);
-    fwrite(&codeStream[0], sizeof(ull), codeStream.size(), options.outputFile);
-    fwrite(&argumentStream[0], sizeof(ull), argumentStream.size(), options.outputFile);
+
+    if (!fzip_detail::writeAll(&header, sizeof(FzipHeader), 1, options.outputFile) ||
+        !fzip_detail::writeAll(codes.empty() ? NULL : &codes[0], sizeof(FzipCode), codes.size(),
+                               options.outputFile) ||
+        !fzip_detail::writeAll(commons.empty() ? NULL : &commons[0], sizeof(ull), commons.size(),
+                               options.outputFile) ||
+        !fzip_detail::writeAll(codeStream.empty() ? NULL : &codeStream[0], sizeof(ull),
+                               codeStream.size(), options.outputFile) ||
+        !fzip_detail::writeAll(argumentStream.empty() ? NULL : &argumentStream[0], sizeof(ull),
+                               argumentStream.size(), options.outputFile) ||
+        std::fflush(options.outputFile) != 0) {
+        std::cerr << "Error: failed writing compressed output\n";
+        return false;
+    }
     return true;
-};
+}
 
-bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength);
-
-bool fzipDecompress(FzipOptions options){
-    //TODO: 
-    vector<ull> commons;
-    vector<FzipCode> codes;
-    vector<ull> codeStream;
-    vector<ull> argumentStream;
+inline bool fzipDecompress(const FzipOptions& options) {
+    if (!options.valid || options.inputFile == NULL || options.outputFile == NULL) {
+        return false;
+    }
     FzipHeader header;
-    fread(&header, sizeof(FzipHeader), 1, options.inputFile);
-    codes.resize((header.commonPointer - header.codesPointer) / sizeof(FzipCode));
-    commons.resize((header.codeStreamPointer - header.commonPointer) / sizeof(ull));
-    codeStream.resize((header.argumentStreamPointer - header.codeStreamPointer) / sizeof(ull));
-    argumentStream.resize((header.size - header.argumentStreamPointer) / sizeof(ull));
-    fread(&codes[0], sizeof(FzipCode), codes.size(), options.inputFile);
-    fread(&commons[0], sizeof(ull), commons.size(), options.inputFile);
-    fread(&codeStream[0], sizeof(ull), codeStream.size(), options.inputFile);
-    fread(&argumentStream[0], sizeof(ull), argumentStream.size(), options.inputFile);
+    if (std::fread(&header, sizeof(FzipHeader), 1, options.inputFile) != 1) {
+        std::cerr << "Error: failed reading fzip header\n";
+        return false;
+    }
+    if (header.codesPointer != sizeof(FzipHeader) ||
+        header.commonPointer < header.codesPointer ||
+        header.codeStreamPointer < header.commonPointer ||
+        header.argumentStreamPointer < header.codeStreamPointer ||
+        header.size < header.argumentStreamPointer) {
+        std::cerr << "Error: invalid fzip header layout\n";
+        return false;
+    }
+    ull codesBytes = header.commonPointer - header.codesPointer;
+    ull commonsBytes = header.codeStreamPointer - header.commonPointer;
+    ull codeStreamBytes = header.argumentStreamPointer - header.codeStreamPointer;
+    ull argumentStreamBytes = header.size - header.argumentStreamPointer;
+    if (codesBytes % sizeof(FzipCode) != 0 ||
+        commonsBytes % sizeof(ull) != 0 ||
+        codeStreamBytes % sizeof(ull) != 0 ||
+        argumentStreamBytes % sizeof(ull) != 0) {
+        std::cerr << "Error: misaligned fzip section sizes\n";
+        return false;
+    }
+    ull codesCount = codesBytes / sizeof(FzipCode);
+    ull commonsCount = commonsBytes / sizeof(ull);
+    ull codeWords = codeStreamBytes / sizeof(ull);
+    ull argumentWords = argumentStreamBytes / sizeof(ull);
+    if (codesCount != 512ULL || commonsCount > 65536ULL ||
+        codeWords > std::numeric_limits<std::size_t>::max() / sizeof(ull) ||
+        argumentWords > std::numeric_limits<std::size_t>::max() / sizeof(ull)) {
+        std::cerr << "Error: out-of-range fzip table sizes\n";
+        return false;
+    }
+    if (codeWords > std::numeric_limits<ull>::max() / 64ULL ||
+        argumentWords > std::numeric_limits<ull>::max() / 64ULL ||
+        header.codeStreamBitLength > codeWords * 64ULL ||
+        header.argumentStreamBitLength > argumentWords * 64ULL) {
+        std::cerr << "Error: bitstream bit length exceeds section size\n";
+        return false;
+    }
 
-    vector<double> rawStream;
-    fzipDecompress(rawStream, commons, codes, codeStream, argumentStream, header.codeStreamBitLength, header.argumentStreamBitLength);
-    fwrite(&rawStream[0], sizeof(double), rawStream.size(), options.outputFile);
-    //TODO: write rawStream
-};
+    std::vector<FzipCode> codes;
+    std::vector<ull> commons;
+    std::vector<ull> codeStream;
+    std::vector<ull> argumentStream;
+    if (!fzip_detail::readExactVec(options.inputFile, codes, static_cast<std::size_t>(codesCount)) ||
+        !fzip_detail::readExactVec(options.inputFile, commons,
+                                   static_cast<std::size_t>(commonsCount)) ||
+        !fzip_detail::readExactVec(options.inputFile, codeStream,
+                                   static_cast<std::size_t>(codeWords)) ||
+        !fzip_detail::readExactVec(options.inputFile, argumentStream,
+                                   static_cast<std::size_t>(argumentWords))) {
+        std::cerr << "Error: truncated fzip payload\n";
+        return false;
+    }
 
+    std::vector<double> rawStream;
+    if (!fzipDecompress(rawStream, commons, codes, codeStream, argumentStream,
+                        header.codeStreamBitLength, header.argumentStreamBitLength)) {
+        return false;
+    }
+    if (!fzip_detail::writeAll(rawStream.empty() ? NULL : &rawStream[0], sizeof(double),
+                               rawStream.size(), options.outputFile) ||
+        std::fflush(options.outputFile) != 0) {
+        std::cerr << "Error: failed writing decompressed output\n";
+        return false;
+    }
+    return true;
+}
 
-vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCodeCount);
+inline bool fzipCompress(std::vector<double>& rawStream,
+                         std::vector<ull>& commons,
+                         std::vector<FzipCode>& codes,
+                         std::vector<ull>& codeStream,
+                         std::vector<ull>& argumentStream,
+                         ull& codeStreamBitLength,
+                         ull& argumentStreamBitLength,
+                         bool staticCommon,
+                         int maxCodeLength,
+                         int targetCodeLength,
+                         int commonBits) {
+    if (maxCodeLength < 1 || maxCodeLength > 9 ||
+        targetCodeLength < 0 || targetCodeLength > maxCodeLength ||
+        commonBits < 0 || commonBits > 13) {
+        std::cerr << "Error: invalid compression parameters\n";
+        return false;
+    }
+    const std::size_t lutSize = std::size_t{1} << 9;
+    const std::size_t commonCapacity = (commonBits > 0) ? (std::size_t{1} << commonBits) : 0;
 
-vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies);
-
-bool fzipCompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength, bool staticCommon){
-    if(!staticCommon)
-        commons.clear();
+    if (!staticCommon) {
+        commons.assign(commonCapacity, 0ULL);
+    }
     codes.clear();
     codeStream.clear();
     argumentStream.clear();
-    ull* rawStreamUll = (ull*)&rawStream[0];
-    //sort by repeats
-    map<ull, ull> frequencies;
-    for(auto it = rawStream.begin(); it != rawStream.end(); ++it){
-        frequencies[*(ull*)&*it]++;
+    codeStreamBitLength = 0;
+    argumentStreamBitLength = 0;
+
+    if (rawStream.empty()) {
+        codes.assign(lutSize, FzipCode());
+        return true;
     }
 
-    vector<pair<ull,ull> > sortedByFrequency;
-    for(auto it = frequencies.begin(); it != frequencies.end(); ++it){
-        sortedByFrequency.push_back(make_pair(it->second, it->first));
+    std::map<ull, ull> frequencies;
+    for (std::size_t i = 0; i < rawStream.size(); ++i) {
+        frequencies[fzip_detail::doubleToBits(rawStream[i])]++;
     }
-    sort(sortedByFrequency.begin(), sortedByFrequency.end());
-    cerr << "sortedByFrequency size: " << sortedByFrequency.size() << endl;
 
-    //debugging
-    //for(ull i = 0; i < sorted
-
-    //create first fzip codes
-    codes = createFzipCodes(sortedByFrequency, pow(2,8));
-    //codes = createFzipCodes(sortedByFrequency, 4);
-
-    //create commons
-    int i = 0;
-    if(!staticCommon){
-        commons.resize((int)pow(2,13));
-        for(auto it = sortedByFrequency.rbegin(); i < commons.size() && it != sortedByFrequency.rend(); ++i, ++it){
-            commons[i] = it->second;
-        }
+    std::vector<std::pair<ull, ull> > sortedByFrequency;
+    sortedByFrequency.reserve(frequencies.size());
+    for (std::map<ull, ull>::const_iterator it = frequencies.begin(); it != frequencies.end(); ++it) {
+        sortedByFrequency.push_back(std::make_pair(it->second, it->first));
     }
-    FzipCode commonCode;
-    commonCode.isCommon = 1;
-    commonCode.prefixLength = 64 - 13;
-    codes.push_back(commonCode);
+    std::sort(sortedByFrequency.begin(), sortedByFrequency.end());
 
-    //TODO: update fzipcode frequencies
-    vector<pair<ull, FzipCode> > codeFrequencies;
-    map<ull, int> mapToPrefixCode;
-    i = 0;
-    for(auto it = codes.begin(); it != codes.end(); ++it){
-        if(!it->isCommon)
-            mapToPrefixCode[it->prefix] = codeFrequencies.size();
-        codeFrequencies.push_back(make_pair(0, *it));
-        i++;
+    std::size_t maxAllowedCodes = std::size_t{1} << maxCodeLength;
+    std::size_t targetPrefixCodes = std::size_t{1} << targetCodeLength;
+    if (targetPrefixCodes >= maxAllowedCodes) {
+        targetPrefixCodes = maxAllowedCodes - 1;
     }
-    set<ull> commonSet(commons.begin(), commons.end());
-    for(auto it = frequencies.begin(); it != frequencies.end(); ++it){
-        //find code
-        int index = prev(mapToPrefixCode.upper_bound(it->first))->second;
-        if(codes[index].prefixLength != 64 && commonSet.count(it->first))
-            index = codeFrequencies.size()-1;
-        codeFrequencies[index].first += it->second;
-    }
-    //use huffman codes
-    int total = 0;
-    int bitLengthTarget = 8;
-    bool valid = false;
-    while(!valid){
-        for(auto it = codeFrequencies.begin(); it != codeFrequencies.end(); ++it){
-            total += it->first;
-            if(it->first == 0){
-                codeFrequencies.erase(it);
-                it--;
-                continue;
-            }
-            if(it->first < rawStream.size() / pow(2,bitLengthTarget)){
-                it->first = rawStream.size() / pow(2,bitLengthTarget) + 1;
-            }
-        }
-        codes = huffmanCoding(codeFrequencies);
-        valid = true;
-        for(auto it = codes.begin(); it != codes.end(); ++it){
-            if(it->codeLength > 9){
-                cerr << "code greater than 9" << endl;
-                valid = false;
-                bitLengthTarget--;
-            }else if(it->codeLength == 0){
-                cerr << "code length equals 0" << endl;
-                exit(1);
-            }
+
+    std::vector<FzipCode> prefixCodes = createFzipCodes(sortedByFrequency, targetPrefixCodes);
+
+    std::size_t activeCommonCount = std::min(commons.size(), commonCapacity);
+    if (!staticCommon) {
+        activeCommonCount = std::min(sortedByFrequency.size(), commonCapacity);
+        std::size_t idx = 0;
+        for (std::vector<std::pair<ull, ull> >::const_reverse_iterator it =
+                 sortedByFrequency.rbegin();
+             idx < activeCommonCount && it != sortedByFrequency.rend(); ++idx, ++it) {
+            commons[idx] = it->second;
         }
     }
 
-    for(auto it = codes.begin(); it != codes.end(); ++it){
-        if(it->codeLength > 9){
-            cerr << "code greater than 9" << endl;
-            exit(1);
-        }else if(it->codeLength == 0){
-            cerr << "code length equals 0" << endl;
-            exit(1);
-        }
-    }
-
-    mapToPrefixCode.clear();
-    int indexToCommonCode = 0;
-    i = 0;
-    for(auto it = codes.begin(); it != codes.end(); ++it){
-        if(!it->isCommon)
-            mapToPrefixCode[it->prefix] = i;
-        else
-            indexToCommonCode = i;
-        i++;
-    }
-
-    //TODO: create final fzip codes
-    vector<FzipCode> newCodes;
-    newCodes.resize(pow(2,9));
-    for(int i = 0; i < codes.size(); i++){
-        for(int j = codes[i].code; j < pow(2,9); j += pow(2,codes[i].codeLength))
-            newCodes[j] = codes[i];
-    }
-    //TODO: create codeStream and argumentStream
-    map<ull, int> mapToCommon;
-    for(int i = 0; i < commons.size(); ++i){
+    std::unordered_set<ull> commonSet;
+    std::unordered_map<ull, std::size_t> mapToCommon;
+    for (std::size_t i = 0; i < activeCommonCount; ++i) {
+        commonSet.insert(commons[i]);
         mapToCommon[commons[i]] = i;
     }
+
+    FzipCode commonCode;
+    commonCode.isCommon = 1;
+    commonCode.prefixLength = static_cast<ull>(64 - commonBits);
+
+    std::map<ull, std::size_t> mapToOrigPrefix;
+    std::vector<ull> origFrequencies(prefixCodes.size() + 1, 0ULL);
+    for (std::size_t i = 0; i < prefixCodes.size(); ++i) {
+        mapToOrigPrefix[prefixCodes[i].prefix] = i;
+    }
+
+    const ull commonThresholdPrefixLen = static_cast<ull>(64 - commonBits);
+    for (std::map<ull, ull>::const_iterator it = frequencies.begin(); it != frequencies.end(); ++it) {
+        std::map<ull, std::size_t>::const_iterator ub = mapToOrigPrefix.upper_bound(it->first);
+        if (ub == mapToOrigPrefix.begin()) {
+            std::cerr << "Error: value missing from prefix trie partition\n";
+            return false;
+        }
+        std::size_t origIdx = std::prev(ub)->second;
+        if (activeCommonCount > 0 &&
+            prefixCodes[origIdx].prefixLength <= commonThresholdPrefixLen &&
+            commonSet.count(it->first)) {
+            origFrequencies[prefixCodes.size()] += it->second;
+        } else {
+            origFrequencies[origIdx] += it->second;
+        }
+    }
+
+    std::vector<std::pair<ull, FzipCode> > codeFrequencies;
+    std::vector<int> origToActive(prefixCodes.size(), -1);
+    int activeCommonIdx = -1;
+    for (std::size_t i = 0; i < prefixCodes.size(); ++i) {
+        if (origFrequencies[i] > 0) {
+            origToActive[i] = static_cast<int>(codeFrequencies.size());
+            codeFrequencies.push_back(std::make_pair(origFrequencies[i], prefixCodes[i]));
+        }
+    }
+    if (origFrequencies[prefixCodes.size()] > 0) {
+        activeCommonIdx = static_cast<int>(codeFrequencies.size());
+        codeFrequencies.push_back(std::make_pair(origFrequencies[prefixCodes.size()], commonCode));
+    }
+
+    codes = huffmanCoding(codeFrequencies, maxCodeLength);
+    if (codes.empty()) {
+        std::cerr << "Error: failed to construct bounded-length Huffman codes\n";
+        return false;
+    }
+    for (std::size_t i = 0; i < codes.size(); ++i) {
+        if (codes[i].codeLength == 0 || codes[i].codeLength > static_cast<ull>(maxCodeLength)) {
+            std::cerr << "Error: invalid Huffman code length produced\n";
+            return false;
+        }
+    }
+
+    std::vector<FzipCode> lut(lutSize, FzipCode());
+    for (std::size_t i = 0; i < codes.size(); ++i) {
+        std::size_t stride = std::size_t{1} << codes[i].codeLength;
+        for (std::size_t j = static_cast<std::size_t>(codes[i].code); j < lutSize; j += stride) {
+            lut[j] = codes[i];
+        }
+    }
+
     int codeBufferEndBit = 0;
     int argumentBufferEndBit = 0;
-
     ull codeBuffer = 0;
     ull argumentBuffer = 0;
-    ull countVeryCommons = 0;
-    ull countCommons = 0;
-    ull countNotCommons = 0;
-    for(int i = 0; i < rawStream.size(); ++i){
-        int index = prev(mapToPrefixCode.upper_bound(rawStreamUll[i]))->second;
-        if(mapToPrefixCode.upper_bound(rawStreamUll[i]) == mapToPrefixCode.begin()){
-            index = indexToCommonCode;
-        }
-        if((codes[index].prefixLength > (64 - 13)) && codes[index].prefix == rawStreamUll[i]){
-            countVeryCommons++;
-        } else if(commonSet.count(rawStreamUll[i])){
-            index = indexToCommonCode;
-            countCommons++;
-        }else{
-            countNotCommons++;
-        }
-        if(codes[index].codeLength == 0){
-            cerr << "fail" << endl;
-            exit(1);
-        }
-        codeBuffer |= (ull)codes[index].code << codeBufferEndBit;
-        codeBufferEndBit += codes[index].codeLength;
-        if(codeBufferEndBit >= 64){
-            codeStream.push_back(codeBuffer);
-            codeBufferEndBit -= 64;
-            codeBuffer = codes[index].code >> (codes[index].codeLength - codeBufferEndBit);
-        }
-        ull argument;
-        int argumentLength;
-        if(codes[index].isCommon){
-            argument = mapToCommon[rawStreamUll[i]];
-            argumentLength = 13;
-        }else if(codes[index].prefixLength == 64){
-            argument = 0;
-            argumentLength = 0;
-        }else{
-            ull mask = -1LL;
-            argument = rawStreamUll[i] & ((ull)-1LL >> codes[index].prefixLength);
-            argumentLength = 64 - codes[index].prefixLength;
-        }
-        argumentBuffer |= argument << argumentBufferEndBit;
-        argumentBufferEndBit += argumentLength;
-        if(argumentBufferEndBit >= 64){
-            argumentStream.push_back(argumentBuffer);
-            argumentBufferEndBit -= 64;
-            argumentBuffer = argument >> (argumentLength - argumentBufferEndBit);
-        }
-    }
-    cerr << "Very common count: " << countVeryCommons << endl;
-    cerr << "Common count: " << countCommons << endl;
-    cerr << "Not common count: " << countNotCommons << endl;
-    codeStreamBitLength = codeStream.size() * 64 + codeBufferEndBit;
-    argumentStreamBitLength = argumentStream.size() * 64 + argumentBufferEndBit;
-    codeStream.push_back(codeBuffer);
-    codeStream.push_back(0);
-    argumentStream.push_back(argumentBuffer);
-    for(int i = 0; i < 6; ++i)
-        argumentStream.push_back(0);
 
-    codes = newCodes;
+    for (std::size_t i = 0; i < rawStream.size(); ++i) {
+        ull rawBits = fzip_detail::doubleToBits(rawStream[i]);
+        std::map<ull, std::size_t>::const_iterator ub = mapToOrigPrefix.upper_bound(rawBits);
+        if (ub == mapToOrigPrefix.begin()) {
+            std::cerr << "Error: value missing from prefix map during encoding\n";
+            return false;
+        }
+        std::size_t origIdx = std::prev(ub)->second;
+        int activeIdx = origToActive[origIdx];
+        if (activeCommonCount > 0 &&
+            prefixCodes[origIdx].prefixLength <= commonThresholdPrefixLen &&
+            commonSet.count(rawBits)) {
+            activeIdx = activeCommonIdx;
+        }
+        if (activeIdx < 0 || static_cast<std::size_t>(activeIdx) >= codes.size()) {
+            std::cerr << "Error: unmapped symbol during encoding\n";
+            return false;
+        }
+
+        const FzipCode& sym = codes[static_cast<std::size_t>(activeIdx)];
+        fzip_detail::appendBits(codeStream, codeBuffer, codeBufferEndBit,
+                                static_cast<ull>(sym.code),
+                                static_cast<int>(sym.codeLength));
+
+        ull argument = 0;
+        int argumentLength = 0;
+        if (sym.isCommon) {
+            std::unordered_map<ull, std::size_t>::const_iterator cit = mapToCommon.find(rawBits);
+            if (cit == mapToCommon.end()) {
+                std::cerr << "Error: common value missing from index map\n";
+                return false;
+            }
+            argument = static_cast<ull>(cit->second);
+            argumentLength = commonBits;
+        } else if (sym.prefixLength < 64) {
+            argumentLength = 64 - static_cast<int>(sym.prefixLength);
+            argument = (argumentLength < 64) ? (rawBits & ((1ULL << argumentLength) - 1ULL))
+                                             : rawBits;
+        }
+        fzip_detail::appendBits(argumentStream, argumentBuffer, argumentBufferEndBit,
+                                argument, argumentLength);
+    }
+
+    codeStreamBitLength = static_cast<ull>(codeStream.size()) * 64ULL +
+                          static_cast<ull>(codeBufferEndBit);
+    argumentStreamBitLength = static_cast<ull>(argumentStream.size()) * 64ULL +
+                              static_cast<ull>(argumentBufferEndBit);
+
+    if (codeBufferEndBit > 0) {
+        codeStream.push_back(codeBuffer);
+    }
+    if (argumentBufferEndBit > 0) {
+        argumentStream.push_back(argumentBuffer);
+    }
+
+    codes.swap(lut);
     return true;
-};
-
-struct HuffmanNode{
-    HuffmanNode* leftChild;
-    HuffmanNode* rightChild;
-    int frequency;
-    FzipCode* codePtr;
-    bool traversed;
-    HuffmanNode(){
-        traversed = 0;
-    }
-};
-
-bool cmpHuffmanNode(HuffmanNode a, HuffmanNode b){
-    return a.frequency < b.frequency;
 }
 
-void setHuffmanCodesDFS(HuffmanNode* curr, ull code, ull depth){
-    if(curr->traversed){
-        return;
+inline std::vector<FzipCode> huffmanCoding(
+    const std::vector<std::pair<ull, FzipCode> >& codeFrequencies,
+    int maxCodeLength) {
+    std::vector<FzipCode> ret;
+    std::size_t n = codeFrequencies.size();
+    if (n == 0 || maxCodeLength < 1 || maxCodeLength > 15 ||
+        n > (std::size_t{1} << maxCodeLength)) {
+        return ret;
     }
-    curr->traversed = 1;
-    if(depth > 9){
-        cerr << "something is wrong" << endl;
-        cerr << "depth: " << depth << endl;
-        //return;
-    }
-    if(curr->codePtr != nullptr){
-        curr->codePtr->code = code;
-        curr->codePtr->codeLength = depth;
-    }else{
-        setHuffmanCodesDFS(curr->leftChild, code, depth + 1);
-        setHuffmanCodesDFS(curr->rightChild, code | (1 << depth), depth + 1);
-    }
-}
-
-vector<FzipCode> huffmanCoding(vector<pair<ull, FzipCode> > codeFrequencies){
-    if(codeFrequencies.size() == 0)
-        codeFrequencies.push_back(make_pair(0, FzipCode()));
-    //if(codeFrequencies.size() == 1)
-    //    codeFrequencies.push_back(make_pair(0, FzipCode()));
-    vector<FzipCode> ret;
-    for(int i = 0; i < codeFrequencies.size(); ++i){
+    ret.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
         ret.push_back(codeFrequencies[i].second);
     }
-    vector<HuffmanNode> tree;
-    tree.resize(2 * ret.size());
-    HuffmanNode* beginning = &tree[0];
-    HuffmanNode* ending = beginning + ret.size();
-    for(int i = 0; i < ret.size(); ++i){
-        (beginning + i)->frequency = codeFrequencies[i].first;
-        (beginning + i)->codePtr = &ret[0] + i;
-        (beginning + i)->leftChild = nullptr;
-        (beginning + i)->rightChild = nullptr;
-    }
-    while(beginning + 1 < ending){
-        sort(beginning, ending, cmpHuffmanNode);
-        ending->leftChild = beginning;
-        ending->rightChild = beginning + 1;
-        ending->frequency = beginning->frequency + (beginning+1)->frequency;
-        ending->codePtr = nullptr;
-        ending++;
-        beginning += 2;
-    }
-    setHuffmanCodesDFS(ending - 1, 0, 0);
-    if(ret.size() == 1){
+    if (n == 1) {
+        ret[0].code = 0;
         ret[0].codeLength = 1;
+        return ret;
+    }
+
+    struct PMNode {
+        ull weight;
+        int left;
+        int right;
+        int sym;
+    };
+
+    std::vector<std::size_t> sortedSyms(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        sortedSyms[i] = i;
+    }
+    std::stable_sort(sortedSyms.begin(), sortedSyms.end(),
+                     [&](std::size_t a, std::size_t b) {
+                         return codeFrequencies[a].first < codeFrequencies[b].first;
+                     });
+
+    std::vector<PMNode> arena;
+    arena.reserve(n * static_cast<std::size_t>(maxCodeLength) * 2);
+    std::vector<int> baseCoins;
+    baseCoins.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        std::size_t sym = sortedSyms[i];
+        ull w = std::max<ull>(1ULL, codeFrequencies[sym].first);
+        PMNode node = {w, -1, -1, static_cast<int>(sym)};
+        baseCoins.push_back(static_cast<int>(arena.size()));
+        arena.push_back(node);
+    }
+
+    std::vector<int> curr = baseCoins;
+    for (int level = 1; level < maxCodeLength; ++level) {
+        std::vector<int> pkgs;
+        pkgs.reserve(curr.size() / 2);
+        for (std::size_t i = 0; i + 1 < curr.size(); i += 2) {
+            PMNode pkg = {
+                arena[static_cast<std::size_t>(curr[i])].weight +
+                    arena[static_cast<std::size_t>(curr[i + 1])].weight,
+                curr[i],
+                curr[i + 1],
+                -1
+            };
+            pkgs.push_back(static_cast<int>(arena.size()));
+            arena.push_back(pkg);
+        }
+        std::vector<int> nextCurr;
+        nextCurr.reserve(baseCoins.size() + pkgs.size());
+        std::merge(baseCoins.begin(), baseCoins.end(),
+                   pkgs.begin(), pkgs.end(),
+                   std::back_inserter(nextCurr),
+                   [&](int a, int b) {
+                       return arena[static_cast<std::size_t>(a)].weight <
+                              arena[static_cast<std::size_t>(b)].weight;
+                   });
+        curr.swap(nextCurr);
+    }
+
+    std::size_t takeCount = 2 * n - 2;
+    if (curr.size() < takeCount) {
+        return std::vector<FzipCode>();
+    }
+
+    std::vector<int> lengths(n, 0);
+    std::vector<int> stack;
+    stack.reserve(takeCount * 2);
+    for (std::size_t i = 0; i < takeCount; ++i) {
+        stack.push_back(curr[i]);
+    }
+    while (!stack.empty()) {
+        int nodeIdx = stack.back();
+        stack.pop_back();
+        const PMNode& node = arena[static_cast<std::size_t>(nodeIdx)];
+        if (node.sym >= 0) {
+            lengths[static_cast<std::size_t>(node.sym)]++;
+        } else {
+            stack.push_back(node.left);
+            stack.push_back(node.right);
+        }
+    }
+
+    std::vector<std::size_t> canonicalOrder(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        canonicalOrder[i] = i;
+    }
+    std::stable_sort(canonicalOrder.begin(), canonicalOrder.end(),
+                     [&](std::size_t a, std::size_t b) {
+                         return lengths[a] < lengths[b];
+                     });
+
+    ull nextCode = 0;
+    int prevLen = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        std::size_t idx = canonicalOrder[i];
+        int len = lengths[idx];
+        if (len < 1 || len > maxCodeLength) {
+            return std::vector<FzipCode>();
+        }
+        nextCode <<= (len - prevLen);
+        ull lsbCode = 0;
+        for (int b = 0; b < len; ++b) {
+            if ((nextCode >> (len - 1 - b)) & 1ULL) {
+                lsbCode |= (1ULL << b);
+            }
+        }
+        ret[idx].code = lsbCode;
+        ret[idx].codeLength = static_cast<ull>(len);
+        ++nextCode;
+        prevLen = len;
     }
     return ret;
 }
 
-struct PrefixNode{
-    PrefixNode* leftChild;
-    PrefixNode* rightChild;
-    int frequency;
-    PrefixNode(){
-        leftChild = nullptr;
-        rightChild = nullptr;
-        frequency = 0;
-    }
-    void clear(){
-        leftChild = nullptr;
-        rightChild = nullptr;
-        frequency = 0;
-    }
+struct PrefixNode {
+    std::size_t leftChild;
+    std::size_t rightChild;
+    ull frequency;
+    PrefixNode()
+        : leftChild(std::numeric_limits<std::size_t>::max()),
+          rightChild(std::numeric_limits<std::size_t>::max()),
+          frequency(0) {}
 };
 
-bool checkBounds(PrefixNode* begin, PrefixNode* end){
-    for(PrefixNode* ptr = begin; ptr != end; ++ptr){
-        if((ptr->leftChild < begin || ptr->leftChild >= end) && ptr->leftChild != nullptr)
-            return false;
-        if((ptr->rightChild < begin || ptr->rightChild >= end) && ptr->rightChild != nullptr)
-            return false;
+inline void dfsPrefixTree(const std::vector<PrefixNode>& tree,
+                          std::size_t curr,
+                          const std::unordered_set<std::size_t>& partition,
+                          std::vector<FzipCode>& codes,
+                          int depth,
+                          ull prefix) {
+    const std::size_t kNull = std::numeric_limits<std::size_t>::max();
+    if (curr == kNull) {
+        return;
     }
-    return true;
+    if (partition.count(curr)) {
+        FzipCode code;
+        code.prefixLength = static_cast<ull>(depth);
+        code.prefix = prefix;
+        codes.push_back(code);
+        return;
+    }
+    dfsPrefixTree(tree, tree[curr].leftChild, partition, codes, depth + 1, prefix);
+    dfsPrefixTree(tree, tree[curr].rightChild, partition, codes, depth + 1,
+                  prefix | (1ULL << (63 - depth)));
 }
 
-void dfsPrefixTree(PrefixNode* curr, set<PrefixNode*> &partition, vector<FzipCode> &codes, int depth, ull prefix);
-
-
-bool sortByFrequency(PrefixNode* left, PrefixNode* right){
-    return left->frequency < right->frequency;
-}
-
-vector<FzipCode> createFzipCodes(vector<pair<ull, ull> > &values, int targetCodeCount){
-    //TODO: fix this function
-    vector<FzipCode> ret;
-    //Create tree
-    ull allocationSize = sizeof(PrefixNode) * (values.size() * 64 + 1);
-    PrefixNode* tree = (PrefixNode*)malloc(allocationSize);
-    while(tree == nullptr){
-        allocationSize /= 2;
-        tree = (PrefixNode*)malloc(allocationSize);
+inline std::vector<FzipCode> createFzipCodes(const std::vector<std::pair<ull, ull> >& values,
+                                             std::size_t targetCodeCount) {
+    std::vector<FzipCode> ret;
+    if (values.empty() || targetCodeCount == 0) {
+        return ret;
     }
-    PrefixNode* treeEnd = tree + (allocationSize / sizeof(PrefixNode));
-    PrefixNode* freePtr = tree + 1;
-    PrefixNode* root = tree;
-    root->clear();
-    for(int i = 0; i < values.size(); ++i){
+
+    const std::size_t kNull = std::numeric_limits<std::size_t>::max();
+    std::vector<PrefixNode> tree(1);
+
+    for (std::size_t i = 0; i < values.size(); ++i) {
         ull value = values[i].second;
         ull frequency = values[i].first;
-        PrefixNode* currNode = root;
-        currNode->frequency += frequency;
-        for(int j = 0; j < 64; ++j){
-            if(value & (1LL << (63 - j))){
-                if(currNode->rightChild == nullptr){
-                    freePtr->clear();
-                    currNode->rightChild = freePtr++;
+        std::size_t currNode = 0;
+        tree[currNode].frequency += frequency;
+        for (int j = 0; j < 64; ++j) {
+            if (value & (1ULL << (63 - j))) {
+                if (tree[currNode].rightChild == kNull) {
+                    std::size_t nextIdx = tree.size();
+                    tree[currNode].rightChild = nextIdx;
+                    tree.push_back(PrefixNode());
                 }
-                currNode = currNode->rightChild;
-            }else{
-                if(currNode->leftChild == nullptr){
-                    freePtr->clear();
-                    currNode->leftChild = freePtr++;
+                currNode = tree[currNode].rightChild;
+            } else {
+                if (tree[currNode].leftChild == kNull) {
+                    std::size_t nextIdx = tree.size();
+                    tree[currNode].leftChild = nextIdx;
+                    tree.push_back(PrefixNode());
                 }
-                currNode = currNode->leftChild;
+                currNode = tree[currNode].leftChild;
             }
-            currNode->frequency += frequency;
+            tree[currNode].frequency += frequency;
         }
     }
-    if(!checkBounds(root, freePtr))
-        cerr << "bounds failure" << endl;
-    int total = tree[0].frequency;
 
-    //Create partition
-    vector<PrefixNode*> partition;
-    vector<PrefixNode*> veryCommonValues;
-    int currentCodeCount = 1;
-    partition.push_back(root);
-    int i = 0;
-    while(currentCodeCount < targetCodeCount && partition.size() != 0){
-        if(currentCodeCount < 0){
-            cerr << "wtf mate" << endl;
-            exit(1);
-        }
-        if(partition.back()->leftChild == nullptr && partition.back()->rightChild == nullptr){
-            veryCommonValues.push_back(partition.back());
-            partition.pop_back();
-            int amountToAdd = targetCodeCount * 1.0 * veryCommonValues.back()->frequency / total - 1.0;
-            if(amountToAdd > 0)
-                currentCodeCount += amountToAdd;
-        }else if(partition.back()->leftChild == nullptr){
-            PrefixNode* tmp = partition.back()->rightChild;
-            partition.pop_back();
-            partition.push_back(tmp);
-        }else if(partition.back()->rightChild == nullptr){
-            PrefixNode* tmp = partition.back()->leftChild;
-            partition.pop_back();
-            partition.push_back(tmp);
-        }else{
-            PrefixNode* tmp0 = partition.back()->leftChild;
-            PrefixNode* tmp1 = partition.back()->rightChild;
-            partition.pop_back();
-            partition.push_back(tmp0);
-            partition.push_back(tmp1);
-            currentCodeCount++;
-        }
-        sort(partition.begin(), partition.end(), sortByFrequency);
-    }
-    for(int i = 0; i < partition.size(); ++i){
-        while(1){
-            if(partition[i]->leftChild == nullptr && partition[i]->rightChild == nullptr){
+    auto collapseChain = [&](std::size_t nodeIdx) {
+        while (true) {
+            std::size_t l = tree[nodeIdx].leftChild;
+            std::size_t r = tree[nodeIdx].rightChild;
+            if (l != kNull && r == kNull) {
+                nodeIdx = l;
+            } else if (l == kNull && r != kNull) {
+                nodeIdx = r;
+            } else {
                 break;
-            }else if(partition[i]->leftChild != nullptr && partition[i]->rightChild != nullptr){
-                break;
-            }else if(partition[i]->leftChild != nullptr && partition[i]->rightChild == nullptr){
-                partition[i] = partition[i]->leftChild;
-            }else if(partition[i]->leftChild == nullptr && partition[i]->rightChild != nullptr){
-                partition[i] = partition[i]->rightChild;
             }
         }
+        return nodeIdx;
+    };
+
+    struct HeapEntry {
+        ull frequency;
+        std::size_t nodeIdx;
+        bool operator<(const HeapEntry& other) const {
+            return frequency < other.frequency;
+        }
+    };
+
+    std::priority_queue<HeapEntry> pq;
+    std::vector<std::size_t> veryCommonValues;
+    std::size_t root = collapseChain(0);
+    pq.push(HeapEntry{tree[root].frequency, root});
+
+    while (!pq.empty() && (pq.size() + veryCommonValues.size()) < targetCodeCount) {
+        HeapEntry top = pq.top();
+        pq.pop();
+        std::size_t u = top.nodeIdx;
+        std::size_t l = tree[u].leftChild;
+        std::size_t r = tree[u].rightChild;
+        if (l == kNull && r == kNull) {
+            veryCommonValues.push_back(u);
+        } else {
+            std::size_t cl = collapseChain(l);
+            std::size_t cr = collapseChain(r);
+            pq.push(HeapEntry{tree[cl].frequency, cl});
+            pq.push(HeapEntry{tree[cr].frequency, cr});
+        }
     }
-    set<PrefixNode*> partitionSet;
-    for(int i = 0; i < partition.size(); ++i){
-        partitionSet.insert(partition[i]);
+
+    std::unordered_set<std::size_t> partitionSet;
+    while (!pq.empty()) {
+        partitionSet.insert(pq.top().nodeIdx);
+        pq.pop();
     }
-    for(int i = 0; i < veryCommonValues.size(); ++i){
+    for (std::size_t i = 0; i < veryCommonValues.size(); ++i) {
         partitionSet.insert(veryCommonValues[i]);
     }
-    dfsPrefixTree(root, partitionSet, ret, 0, 0LL);
-    free(tree);
+
+    dfsPrefixTree(tree, 0, partitionSet, ret, 0, 0ULL);
     return ret;
 }
 
-void dfsPrefixTree(PrefixNode* curr, set<PrefixNode*> &partition, vector<FzipCode> &codes, int depth, ull prefix){
-    if(curr == nullptr)
-        return;
-    if(partition.count(curr)){
-        FzipCode code;
-        code.prefixLength = depth;
-        code.prefix = prefix;
-        codes.push_back(code);
-    }else{
-        dfsPrefixTree(curr->leftChild, partition, codes, depth + 1, prefix);
-        dfsPrefixTree(curr->rightChild, partition, codes, depth + 1, prefix | (1LL << (63 - depth)));
+inline bool fzipDecompress(std::vector<double>& rawStream,
+                           std::vector<ull>& commons,
+                           std::vector<FzipCode>& codes,
+                           std::vector<ull>& codeStream,
+                           std::vector<ull>& argumentStream,
+                           ull& codeStreamBitLength,
+                           ull& argumentStreamBitLength) {
+    rawStream.clear();
+    if (codeStreamBitLength == 0) {
+        if (argumentStreamBitLength != 0) {
+            std::cerr << "Error: argument stream non-empty for empty code stream\n";
+            return false;
+        }
+        return true;
     }
-}
+    if (codes.size() != 512) {
+        std::cerr << "Error: invalid Huffman lookup table size (" << codes.size() << ")\n";
+        return false;
+    }
+    if (codeStreamBitLength > static_cast<ull>(codeStream.size()) * 64ULL ||
+        argumentStreamBitLength > static_cast<ull>(argumentStream.size()) * 64ULL) {
+        std::cerr << "Error: bitstream bit length exceeds buffer bounds\n";
+        return false;
+    }
 
-bool fzipDecompress(vector<double> &rawStream, vector<ull> &commons, vector<FzipCode> &codes, vector<ull> &codeStream, vector<ull> &argumentStream, ull &codeStreamBitLength, ull &argumentStreamBitLength){
-    //TODO: write
     ull currCodeStreamBit = 0;
     ull currArgumentStreamBit = 0;
-    int i = 0;
-    while(currCodeStreamBit < codeStreamBitLength){
-        ull buffer = codeStream[currCodeStreamBit / 64] >> (currCodeStreamBit % 64);
-        if(currCodeStreamBit % 64 > 64 - 9)
-            buffer |= codeStream[currCodeStreamBit / 64 + 1] << (64 - currCodeStreamBit % 64);
-        FzipCode code = codes[buffer & (ull)-1LL >> 64 - 9];
-        ull value = code.prefix;
+    while (currCodeStreamBit < codeStreamBitLength) {
+        ull peek = fzip_detail::readBits(codeStream, currCodeStreamBit, 9);
+        const FzipCode& code = codes[static_cast<std::size_t>(peek)];
+        if (code.codeLength == 0 || code.codeLength > 9) {
+            std::cerr << "Error: invalid Huffman code length (" << code.codeLength << ")\n";
+            return false;
+        }
+        if (currCodeStreamBit + code.codeLength > codeStreamBitLength) {
+            std::cerr << "Error: code stream truncated\n";
+            return false;
+        }
         currCodeStreamBit += code.codeLength;
 
-        buffer = argumentStream[currArgumentStreamBit / 64] >> (currArgumentStreamBit % 64);
-        if(currArgumentStreamBit % 64)
-            buffer |= argumentStream[currArgumentStreamBit / 64 + 1] << (64 - currArgumentStreamBit % 64);
-        if(code.prefixLength != 64)
-            buffer &= (ull)-1LL >> (code.prefixLength);
-        if(code.isCommon){
-            value = commons[buffer];
-        }else if(code.prefixLength != 64)
-            value |= buffer;
-        currArgumentStreamBit += 64 - code.prefixLength;
-        rawStream.push_back(*(double*)&value);
-        i++;
+        if (code.prefixLength > 64) {
+            std::cerr << "Error: invalid prefix length (" << code.prefixLength << ")\n";
+            return false;
+        }
+        int argBits = 64 - static_cast<int>(code.prefixLength);
+        if (currArgumentStreamBit + static_cast<ull>(argBits) > argumentStreamBitLength) {
+            std::cerr << "Error: argument stream truncated\n";
+            return false;
+        }
+        ull arg = fzip_detail::readBits(argumentStream, currArgumentStreamBit, argBits);
+        currArgumentStreamBit += static_cast<ull>(argBits);
+
+        ull value = code.prefix;
+        if (code.isCommon) {
+            if (arg >= commons.size()) {
+                std::cerr << "Error: common table index out of bounds\n";
+                return false;
+            }
+            value = commons[static_cast<std::size_t>(arg)];
+        } else if (argBits > 0) {
+            value |= arg;
+        }
+        rawStream.push_back(fzip_detail::bitsToDouble(value));
     }
-    if(currCodeStreamBit != codeStreamBitLength)
-        cerr << "overflow: " << currCodeStreamBit << "/" << codeStreamBitLength << endl;
-    if(currArgumentStreamBit != argumentStreamBitLength)
-        cerr << "Argument stream mismatch: " << currArgumentStreamBit << "/" << argumentStreamBitLength << endl;
-    cerr << "Argument stream : " << currArgumentStreamBit << "/" << argumentStreamBitLength << endl;
+
+    if (currCodeStreamBit != codeStreamBitLength) {
+        std::cerr << "Error: code stream mismatch: " << currCodeStreamBit << "/"
+                  << codeStreamBitLength << "\n";
+        return false;
+    }
+    if (currArgumentStreamBit != argumentStreamBitLength) {
+        std::cerr << "Error: argument stream mismatch: " << currArgumentStreamBit << "/"
+                  << argumentStreamBitLength << "\n";
+        return false;
+    }
+    return true;
 }
 
 #endif
