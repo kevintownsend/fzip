@@ -1,42 +1,74 @@
-all: fzip floatDiff
+CXX ?= g++
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+INCDIR ?= $(PREFIX)/include
+LIBDIR ?= $(PREFIX)/lib
 
-run : fzip
-	fzip -c < ./benchmark/example.bin > example.fz
-	fzip -d example.fz exampleAfter.bin
+CXXFLAGS_COMMON := -std=c++17 -Wall -Wextra -Wpedantic -Werror -Iinclude
+ifeq ($(SANITIZE),1)
+OPTFLAGS := -g -O1 -fsanitize=address,undefined -fno-omit-frame-pointer
+LDFLAGS_EXTRA := -fsanitize=address,undefined
+else ifeq ($(DEBUG),1)
+OPTFLAGS := -g -O1
+LDFLAGS_EXTRA :=
+else
+OPTFLAGS := -O3
+LDFLAGS_EXTRA :=
+endif
 
-run2 : fzip
-	fzip -c ./benchmark/obs_info.trace.bin obs_info.fz
-	fzip -d obs_info.fz obs_info.after
+CXXFLAGS := $(CXXFLAGS_COMMON) $(OPTFLAGS) $(EXTRA_CXXFLAGS)
 
-run3: fzip
-	fzip -c ./benchmark/test.trace.bin test.fz
-	fzip -d test.fz test.after
+BUILD_DIR := build
+LIB_OBJS := $(BUILD_DIR)/fzip.o
+CLI_OBJS := $(BUILD_DIR)/main.o
+TEST_SRCS := $(wildcard tests/*.cpp)
+BENCH_SRCS := $(wildcard benchmark/*.cpp)
 
+.PHONY: all lib test bench install clean
 
-fzip: source/fzip.cpp source/common.o source/sortByRepeats.o include/fzip.hpp
-	g++ -O3 -std=c++0x -Iinclude -o fzip source/fzip.cpp
+all: fzip
 
-source/arithmeticFloatingPointCompression.o: source/arithmeticFloatingPointCompression.cpp
-	g++ -Iinclude -L${HOME}/lib -ltardis -I${HOME}/include -Iinclude -c -std=c++0x source/arithmeticFloatingPointCompression.cpp -o source/arithmeticFloatingPointCompression.o
+$(BUILD_DIR):
+	@mkdir -p $(BUILD_DIR)
 
-source/common.o: source/common.cpp
-	g++ -Iinclude -c -std=gnu++0x source/common.cpp -o source/common.o
+$(BUILD_DIR)/fzip.o: src/fzip.cpp include/fzip/fzip.hpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-source/sortByRepeats.o: source/sortByRepeats.cpp
-	g++ -Iinclude -c -std=gnu++0x source/sortByRepeats.cpp -o source/sortByRepeats.o
+$(BUILD_DIR)/main.o: src/main.cpp include/fzip/fzip.hpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-source/fzipCore.o: source/fzipCore.cpp
-	g++ -Iinclude -c -std=c++11 source/fzipCore.cpp -o source/fzipCore.o
+$(BUILD_DIR)/libfzip.a: $(LIB_OBJS)
+	$(AR) rcs $@ $^
 
-install:
-	cp fzip ${HOME}/bin/.
+lib: $(BUILD_DIR)/libfzip.a
+
+fzip: $(CLI_OBJS) $(LIB_OBJS)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS_EXTRA) $^ -o $@
+
+test: fzip
+ifneq ($(TEST_SRCS),)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS_EXTRA) $(TEST_SRCS) $(LIB_OBJS) -o $(BUILD_DIR)/fzip_test
+	./$(BUILD_DIR)/fzip_test
+else
+	./fzip --help >/dev/null
+	@printf '\0\0\0\0\0\0\0\0\0\0\0\0\0\0\360\77' | ./fzip -c | ./fzip -d >/dev/null
+	@echo "CLI smoke test passed (add tests/*.cpp for full suite)"
+endif
+
+bench: $(LIB_OBJS)
+ifneq ($(BENCH_SRCS),)
+	$(CXX) $(CXXFLAGS) $(LDFLAGS_EXTRA) $(BENCH_SRCS) $(LIB_OBJS) -o $(BUILD_DIR)/bench
+	./$(BUILD_DIR)/bench
+else
+	@echo "No benchmark sources found under benchmark/"
+endif
+
+install: fzip $(BUILD_DIR)/libfzip.a
+	install -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(LIBDIR) $(DESTDIR)$(INCDIR)/fzip
+	install -m 755 fzip $(DESTDIR)$(BINDIR)/fzip
+	install -m 644 $(BUILD_DIR)/libfzip.a $(DESTDIR)$(LIBDIR)/libfzip.a
+	install -m 644 include/fzip/fzip.hpp $(DESTDIR)$(INCDIR)/fzip/fzip.hpp
 
 clean:
-	rm -rf fzip source/*.o
-
-
-floatDiff: floatDiff.cpp
-	g++ -o floatDiff floatDiff.cpp
-
-vim:
-	vim -p makefile ./include/fzip.hpp ./source/fzip.cpp floatDiff.cpp ../spMatrixHelp/rcr.hpp ./source/fzipCore.cpp
+	rm -rf $(BUILD_DIR) fzip
+	$(MAKE) -C benchmark clean
