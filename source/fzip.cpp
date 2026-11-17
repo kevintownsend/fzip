@@ -25,7 +25,7 @@ void printUsage(const char* progName) {
                  " [inputFile [outputFile]]\n"
                  "  -c                    Compress (default)\n"
                  "  -d                    Decompress\n"
-                 "  --MaxCodeLength=N     Max Huffman code length in [1, 9] (default: 9)\n"
+                 "  --MaxCodeLength=N     Max Huffman code length in [1, 15] (default: 9)\n"
                  "  --TargetCodeLength=N  Target prefix tree log2 count in [0, MaxCodeLength]\n"
                  "  -h, --help            Show this help message\n";
 }
